@@ -5,6 +5,7 @@ RUN apk add --no-cache \
     build-base \
     nodejs \
     npm \
+    git \
     inotify-tools \
     postgresql-client
 

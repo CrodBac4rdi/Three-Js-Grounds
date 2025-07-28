@@ -28,6 +28,9 @@ cd Three-Js-Grounds
 docker-compose up
 
 # Visit http://localhost:4000
+
+# Note: If you have PostgreSQL running locally on port 5432, 
+# the containerized PostgreSQL will use port 5433 to avoid conflicts
 ```
 
 That's it! Docker Compose will:

@@ -36,10 +36,6 @@ defmodule ShowcaseWeb.ShowcaseLive do
     end
   end
   
-  defp load_user_models(socket) do
-    models = Modeling.list_models_by_user(socket.assigns.current_user.id)
-    assign(socket, :models, models)
-  end
   
   defp load_all_models(socket) do
     models = Modeling.list_models()
@@ -109,15 +105,14 @@ defmodule ShowcaseWeb.ShowcaseLive do
         <%= if @selected_component do %>
           <div class="border-t border-blue-700 p-4">
             <h3 class="text-white font-bold mb-3">Properties</h3>
-            <div class="space-y-3">
+            <form phx-change="update_properties" class="space-y-3">
+              <input type="hidden" name="component_id" value={@selected_component.id} />
               <div>
                 <label class="text-blue-200 text-xs">Position X</label>
                 <input 
                   type="number" 
+                  name="position_x"
                   value={@selected_component.position.x}
-                  phx-change="update_position"
-                  phx-value-axis="x"
-                  phx-value-component-id={@selected_component.id}
                   step="0.1"
                   class="w-full px-2 py-1 bg-blue-900 text-white rounded"
                 />
@@ -126,10 +121,8 @@ defmodule ShowcaseWeb.ShowcaseLive do
                 <label class="text-blue-200 text-xs">Position Y</label>
                 <input 
                   type="number" 
+                  name="position_y"
                   value={@selected_component.position.y}
-                  phx-change="update_position"
-                  phx-value-axis="y"
-                  phx-value-component-id={@selected_component.id}
                   step="0.1"
                   class="w-full px-2 py-1 bg-blue-900 text-white rounded"
                 />
@@ -138,10 +131,8 @@ defmodule ShowcaseWeb.ShowcaseLive do
                 <label class="text-blue-200 text-xs">Position Z</label>
                 <input 
                   type="number" 
+                  name="position_z"
                   value={@selected_component.position.z}
-                  phx-change="update_position"
-                  phx-value-axis="z"
-                  phx-value-component-id={@selected_component.id}
                   step="0.1"
                   class="w-full px-2 py-1 bg-blue-900 text-white rounded"
                 />
@@ -150,13 +141,12 @@ defmodule ShowcaseWeb.ShowcaseLive do
                 <label class="text-blue-200 text-xs">Color</label>
                 <input 
                   type="color" 
+                  name="color"
                   value={@selected_component.color || "#00ff00"}
-                  phx-change="update_color"
-                  phx-value-component-id={@selected_component.id}
                   class="w-full h-8 bg-blue-900 rounded cursor-pointer"
                 />
               </div>
-            </div>
+            </form>
           </div>
         <% end %>
       </div>
@@ -266,54 +256,39 @@ defmodule ShowcaseWeb.ShowcaseLive do
     {:noreply, assign(socket, :selected_component, nil)}
   end
   
-  def handle_event("update_position", %{"axis" => axis, "component-id" => component_id, "value" => value}, socket) do
-    {value, _} = Float.parse(value)
+  def handle_event("update_properties", %{"component_id" => component_id, "position_x" => x, "position_y" => y, "position_z" => z, "color" => color}, socket) do
+    id = String.to_integer(component_id)
+    
+    # Parse position values
+    {x_val, _} = Float.parse(x)
+    {y_val, _} = Float.parse(y)
+    {z_val, _} = Float.parse(z)
     
     # Update in components map
     updated_components = 
-      Map.update!(socket.assigns.components, String.to_integer(component_id), fn component ->
-        put_in(component, [:position, String.to_atom(axis)], value)
+      Map.update!(socket.assigns.components, id, fn component ->
+        component
+        |> Map.put(:position, %{x: x_val, y: y_val, z: z_val})
+        |> Map.put(:color, color)
       end)
     
     # Update selected component if it matches
     selected = 
-      if socket.assigns.selected_component && to_string(socket.assigns.selected_component.id) == component_id do
-        put_in(socket.assigns.selected_component, [:position, String.to_atom(axis)], value)
+      if socket.assigns.selected_component && socket.assigns.selected_component.id == id do
+        socket.assigns.selected_component
+        |> Map.put(:position, %{x: x_val, y: y_val, z: z_val})
+        |> Map.put(:color, color)
       else
         socket.assigns.selected_component
       end
     
-    # Push update to Three.js
-    socket = push_event(socket, "update_component_position", %{
+    # Push updates to Three.js
+    socket = socket
+    |> push_event("update_component_position", %{
       id: component_id,
-      axis: axis,
-      value: value
+      position: %{x: x_val, y: y_val, z: z_val}
     })
-    
-    {:noreply, 
-     socket
-     |> assign(:components, updated_components)
-     |> assign(:selected_component, selected)
-    }
-  end
-  
-  def handle_event("update_color", %{"component-id" => component_id, "value" => color}, socket) do
-    # Update in components map
-    updated_components = 
-      Map.update!(socket.assigns.components, String.to_integer(component_id), fn component ->
-        Map.put(component, :color, color)
-      end)
-    
-    # Update selected component if it matches
-    selected = 
-      if socket.assigns.selected_component && to_string(socket.assigns.selected_component.id) == component_id do
-        Map.put(socket.assigns.selected_component, :color, color)
-      else
-        socket.assigns.selected_component
-      end
-    
-    # Push update to Three.js
-    socket = push_event(socket, "update_component_color", %{
+    |> push_event("update_component_color", %{
       id: component_id,
       color: color
     })
@@ -326,60 +301,73 @@ defmodule ShowcaseWeb.ShowcaseLive do
   end
 
   def handle_event("save_scene", _params, socket) do
+    IO.puts("Save scene event received")
     # Request current state from Three.js
     {:noreply, push_event(socket, "request_scene_state", %{})}
   end
   
   def handle_event("scene_state_ready", %{"objects" => objects, "scene_config" => scene_config}, socket) do
-    # Convert JS objects to our component format
+    IO.puts("Scene state ready received")
+    IO.inspect(objects, label: "Objects")
+    IO.inspect(scene_config, label: "Scene config")
+    
+    # Convert JS objects to our component format with string keys
     components = Enum.reduce(objects, %{}, fn obj, acc ->
       component = %{
-        id: obj["id"],
-        type: obj["type"],
-        position: %{
-          x: obj["position"]["x"],
-          y: obj["position"]["y"],
-          z: obj["position"]["z"]
+        "id" => obj["id"],
+        "type" => obj["type"],
+        "position" => %{
+          "x" => obj["position"]["x"],
+          "y" => obj["position"]["y"],
+          "z" => obj["position"]["z"]
         },
-        rotation: %{
-          x: obj["rotation"]["x"],
-          y: obj["rotation"]["y"],
-          z: obj["rotation"]["z"]
+        "rotation" => %{
+          "x" => obj["rotation"]["x"],
+          "y" => obj["rotation"]["y"],
+          "z" => obj["rotation"]["z"]
         },
-        scale: %{
-          x: obj["scale"]["x"],
-          y: obj["scale"]["y"],
-          z: obj["scale"]["z"]
+        "scale" => %{
+          "x" => obj["scale"]["x"],
+          "y" => obj["scale"]["y"],
+          "z" => obj["scale"]["z"]
         },
-        color: obj["color"],
-        rotating: obj["rotating"],
-        rotationSpeedX: obj["rotationSpeedX"],
-        rotationSpeedY: obj["rotationSpeedY"]
+        "color" => obj["color"],
+        "rotating" => obj["rotating"],
+        "rotationSpeedX" => obj["rotationSpeedX"],
+        "rotationSpeedY" => obj["rotationSpeedY"],
+        "filename" => obj["filename"]
       }
-      Map.put(acc, obj["id"], component)
+      Map.put(acc, to_string(obj["id"]), component)
     end)
     
     model_data = %{
-      components: components,
-      scene_config: scene_config,
-      camera_state: Map.get(scene_config, "camera", %{}),
-      lighting_config: Map.get(scene_config, "lighting", %{})
+      "components" => components,
+      "scene_config" => scene_config,
+      "camera_state" => Map.get(scene_config, "camera", %{}),
+      "lighting_config" => Map.get(scene_config, "lighting", %{})
     }
     
     # Save without user_id for now
-    case Modeling.create_model(%{
+    attrs = %{
       user_id: socket.assigns.current_user && socket.assigns.current_user.id || nil,
       name: "Scene #{DateTime.utc_now() |> Calendar.strftime("%Y-%m-%d %H:%M")}",
       data: model_data
-    }) do
+    }
+    
+    IO.inspect(attrs, label: "Model attrs to save")
+    
+    case Modeling.create_model(attrs) do
       {:ok, _model} ->
+        IO.puts("Model saved successfully")
         {:noreply, 
          socket
          |> put_flash(:info, "Scene saved successfully!")
          |> load_all_models()
         }
       
-      {:error, _changeset} ->
+      {:error, changeset} ->
+        IO.puts("Failed to save model")
+        IO.inspect(changeset, label: "Changeset errors")
         {:noreply, put_flash(socket, :error, "Failed to save scene")}
     end
   end
@@ -408,6 +396,56 @@ defmodule ShowcaseWeb.ShowcaseLive do
           })
         
         {:noreply, put_flash(socket, :info, "Scene loaded: #{model.name}")}
+    end
+  end
+  
+  def handle_event("update_component", %{"id" => id, "position" => position, "rotation" => rotation, "scale" => scale}, socket) do
+    component_id = if is_binary(id), do: String.to_integer(id), else: id
+    
+    # Only update if component exists
+    if Map.has_key?(socket.assigns.components, component_id) do
+      # Update component in state
+      updated_components = 
+        Map.update!(socket.assigns.components, component_id, fn component ->
+          component
+          |> Map.put(:position, %{
+            x: position["x"],
+            y: position["y"],
+            z: position["z"]
+          })
+          |> Map.put(:rotation, %{
+            x: rotation["x"],
+            y: rotation["y"],
+            z: rotation["z"]
+          })
+          |> Map.put(:scale, %{
+            x: scale["x"],
+            y: scale["y"],
+            z: scale["z"]
+          })
+        end)
+      
+      # Update selected component if it matches
+      selected = 
+        if socket.assigns.selected_component && socket.assigns.selected_component.id == component_id do
+          Map.merge(socket.assigns.selected_component, %{
+            position: %{
+              x: position["x"],
+              y: position["y"],
+              z: position["z"]
+            }
+          })
+        else
+          socket.assigns.selected_component
+        end
+      
+      {:noreply, 
+       socket
+       |> assign(:components, updated_components)
+       |> assign(:selected_component, selected)
+      }
+    else
+      {:noreply, socket}
     end
   end
 

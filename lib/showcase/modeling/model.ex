@@ -13,7 +13,7 @@ defmodule Showcase.Modeling.Model do
   @doc false
   def changeset(model, attrs) do
     model
-    |> cast(attrs, [:name, :data])
+    |> cast(attrs, [:name, :data, :user_id])
     |> validate_required([:name, :data])
   end
 end

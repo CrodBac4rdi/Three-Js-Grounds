@@ -20,10 +20,12 @@ const ShowcaseRoom = {
     })
     
     // Handle position updates from Phoenix
-    this.handleEvent("update_component_position", ({id, axis, value}) => {
+    this.handleEvent("update_component_position", ({id, position}) => {
       const object = this.objects.find(obj => obj.userData.id == id)
       if (object) {
-        object.position[axis] = parseFloat(value)
+        if (position) {
+          object.position.set(position.x, position.y, position.z)
+        }
         
         // Update selection helper if this is the selected object
         if (this.selectedObject && this.selectedObject.userData.id == id && this.selectionHelper) {
@@ -43,7 +45,9 @@ const ShowcaseRoom = {
     
     // Handle scene state request for saving
     this.handleEvent("request_scene_state", () => {
+      console.log("Scene state requested from Phoenix")
       const sceneState = this.getCompleteSceneState()
+      console.log("Sending scene state:", sceneState)
       this.pushEvent("scene_state_ready", sceneState)
     })
     
@@ -60,13 +64,13 @@ const ShowcaseRoom = {
     Promise.all([
       import('three'),
       import('three/examples/jsm/controls/OrbitControls.js'),
-      import('three/examples/jsm/controls/TransformControls.js')
-    ]).then(([THREE, OrbitControlsModule, TransformControlsModule]) => {
-      console.log('Modules loaded:', { THREE, OrbitControlsModule, TransformControlsModule })
+      import('three/examples/jsm/loaders/GLTFLoader.js')
+    ]).then(([THREE, OrbitControlsModule, GLTFLoaderModule]) => {
+      console.log('Modules loaded:', { THREE, OrbitControlsModule, GLTFLoaderModule })
       
       this.THREE = THREE
       const { OrbitControls } = OrbitControlsModule
-      const { TransformControls } = TransformControlsModule
+      const { GLTFLoader } = GLTFLoaderModule
       
       const container = this.el
       
@@ -103,20 +107,11 @@ const ShowcaseRoom = {
       controls.minDistance = 1
       controls.maxDistance = 100
       
-      // Transform Controls
-      const transformControls = new TransformControls(camera, renderer.domElement)
-      transformControls.addEventListener('change', () => {
-        if (this.selectionHelper && this.selectedObject) {
-          const box = new THREE.Box3().setFromObject(this.selectedObject)
-          this.selectionHelper.box = box
-        }
-      })
+      // Skip TransformControls for now - we'll use custom dragging
+      let transformControls = null
       
-      transformControls.addEventListener('dragging-changed', (event) => {
-        controls.enabled = !event.value
-      })
-      
-      scene.add(transformControls)
+      // Initialize GLTF loader
+      this.gltfLoader = new GLTFLoader()
       
       // Store references
       this.scene = scene
@@ -220,6 +215,16 @@ const ShowcaseRoom = {
       e.preventDefault()
       container.style.background = ''
       
+      // Check for files first (GLB/GLTF models)
+      if (e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0]
+        if (file.name.toLowerCase().endsWith('.glb') || file.name.toLowerCase().endsWith('.gltf')) {
+          this.loadGLBFile(file, e)
+          return
+        }
+      }
+      
+      // Otherwise handle component drops
       const componentType = e.dataTransfer.getData('component-type')
       if (!componentType) return
       
@@ -343,14 +348,21 @@ const ShowcaseRoom = {
         object: i.object
       })))
       
-      // Only check objects in this.objects array (cubes and spheres)
-      const intersects = this.raycaster.intersectObjects(this.objects, false)
+      // Check objects recursively (true) to catch GLB model children
+      const intersects = this.raycaster.intersectObjects(this.objects, true)
       
       if (intersects.length > 0) {
-        const selectedObject = intersects[0].object
-        // Only select cubes and spheres - they have type in userData
-        if (selectedObject.userData && (selectedObject.userData.type === 'cube' || selectedObject.userData.type === 'sphere')) {
-          this.selectObject(selectedObject)
+        let selectedObject = intersects[0].object
+        
+        // For GLB models, we need to find the parent object that's in our objects array
+        let targetObject = selectedObject
+        while (targetObject.parent && !this.objects.includes(targetObject)) {
+          targetObject = targetObject.parent
+        }
+        
+        // If we found an object in our objects array, select it
+        if (this.objects.includes(targetObject)) {
+          this.selectObject(targetObject)
           return
         }
       }
@@ -403,12 +415,17 @@ const ShowcaseRoom = {
     this.scene.add(helper)
     this.selectionHelper = helper
     
-    // Attach transform controls
-    if (this.transformControls) {
-      this.transformControls.attach(object)
-    }
+    // No transform controls to attach anymore
     
     // Notify Phoenix about selection
+    let color = '#ffffff' // default color
+    if (object.material && object.material.color) {
+      color = '#' + object.material.color.getHexString()
+    } else if (object.userData.type === 'glb') {
+      // For GLB models, we'll use a default or stored color
+      color = object.userData.color || '#ffffff'
+    }
+    
     this.pushEvent("component_selected", {
       id: object.userData.id,
       type: object.userData.type,
@@ -417,10 +434,10 @@ const ShowcaseRoom = {
         y: object.position.y,
         z: object.position.z
       },
-      color: object.material.color ? '#' + object.material.color.getHexString() : '#00ff00'
+      color: color
     })
     
-    // Visual feedback - only for cubes and spheres
+    // Visual feedback - for all selectable objects
     if (object.userData.type === 'cube' || object.userData.type === 'sphere') {
       // Store original color
       if (!object.userData.originalColor) {
@@ -429,6 +446,17 @@ const ShowcaseRoom = {
       // Highlight with emissive
       object.material.emissive = new this.THREE.Color(0xffffff)
       object.material.emissiveIntensity = 0.3
+    } else if (object.userData.type === 'glb') {
+      // For GLB models, traverse and highlight all meshes
+      object.traverse((child) => {
+        if (child.isMesh && child.material) {
+          if (!child.userData.originalEmissive) {
+            child.userData.originalEmissive = child.material.emissive ? child.material.emissive.getHex() : 0x000000
+          }
+          child.material.emissive = new this.THREE.Color(0xffffff)
+          child.material.emissiveIntensity = 0.1
+        }
+      })
     }
   },
   
@@ -445,19 +473,24 @@ const ShowcaseRoom = {
         this.selectionHelper = null
       }
       
-      // Detach transform controls
-      if (this.transformControls) {
-        this.transformControls.detach()
-      }
+      // No transform controls to detach
       
       console.log('Scene children after removing selection helper:', this.scene.children.length)
       console.log('Grid helpers after removing selection helper:', this.scene.children.filter(c => c.type === 'GridHelper').length)
       
-      // Reset visual feedback - only for cubes and spheres
+      // Reset visual feedback - for all selectable objects
       if (this.selectedObject.userData.type === 'cube' || this.selectedObject.userData.type === 'sphere') {
         // Reset emissive
         this.selectedObject.material.emissive = new this.THREE.Color(0x000000)
         this.selectedObject.material.emissiveIntensity = 0
+      } else if (this.selectedObject.userData.type === 'glb') {
+        // For GLB models, traverse and reset all meshes
+        this.selectedObject.traverse((child) => {
+          if (child.isMesh && child.material && child.userData.originalEmissive !== undefined) {
+            child.material.emissive = new this.THREE.Color(child.userData.originalEmissive)
+            child.material.emissiveIntensity = 0
+          }
+        })
       }
       
       this.selectedObject = null
@@ -467,16 +500,25 @@ const ShowcaseRoom = {
   deleteSelectedObject() {
     if (!this.selectedObject) return
     
-    // Only delete cubes and spheres
-    if (this.selectedObject.userData.type !== 'cube' && this.selectedObject.userData.type !== 'sphere') {
-      console.warn("Cannot delete this type of object:", this.selectedObject.userData.type)
-      return
-    }
-    
+    // Allow deletion of all object types
     console.log("Deleting object:", this.selectedObject.userData.type)
     
     // Remove from scene
     this.scene.remove(this.selectedObject)
+    
+    // Clean up GLB model resources
+    if (this.selectedObject.userData.type === 'glb') {
+      this.selectedObject.traverse((child) => {
+        if (child.geometry) child.geometry.dispose()
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(material => material.dispose())
+          } else {
+            child.material.dispose()
+          }
+        }
+      })
+    }
     
     // Remove from objects array
     const objIndex = this.objects.indexOf(this.selectedObject)
@@ -580,6 +622,10 @@ const ShowcaseRoom = {
     })
     
     this.renderer.domElement.addEventListener('mouseup', () => {
+      if (isDragging && this.selectedObject) {
+        // Sync position when dragging ends
+        this.syncObjectToPhoenix(this.selectedObject)
+      }
       isDragging = false
       this.controls.enabled = true
       dragMode = 'horizontal' // Reset to horizontal
@@ -659,6 +705,19 @@ const ShowcaseRoom = {
           object = new this.THREE.Mesh(sphereGeometry, sphereMaterial)
           break
           
+        case 'glb':
+          // Create a placeholder for GLB models (since we can't recreate the actual model)
+          const placeholderGeometry = new this.THREE.BoxGeometry(1, 1, 1)
+          const placeholderMaterial = new this.THREE.MeshPhongMaterial({ 
+            color: 0x808080,
+            wireframe: true
+          })
+          object = new this.THREE.Mesh(placeholderGeometry, placeholderMaterial)
+          
+          // Add text to show it's a GLB placeholder
+          console.log(`GLB model placeholder for: ${objData.filename || 'unknown.glb'}`)
+          break
+          
         default:
           return // Skip unknown types
       }
@@ -695,25 +754,22 @@ const ShowcaseRoom = {
   },
   
   setTransformMode(mode) {
-    if (this.transformControls) {
-      this.transformControls.setMode(mode)
-      console.log(`Transform mode: ${mode}`)
-      
-      // Show visual feedback
-      const modeText = mode === 'translate' ? 'Move (W)' : mode === 'rotate' ? 'Rotate (E)' : 'Scale (R)'
-      this.updateHelpText(modeText)
-    }
+    console.log(`Transform mode: ${mode}`)
+    // Store mode for custom dragging
+    this.transformMode = mode
+    
+    // Show visual feedback
+    const modeText = mode === 'translate' ? 'Move (W)' : mode === 'rotate' ? 'Rotate (E)' : 'Scale (R)'
+    this.updateHelpText(modeText)
   },
   
   toggleTransformSpace() {
-    if (this.transformControls) {
-      const currentSpace = this.transformControls.space
-      this.transformControls.setSpace(currentSpace === 'local' ? 'world' : 'local')
-      console.log(`Transform space: ${this.transformControls.space}`)
-      
-      // Show visual feedback
-      this.updateHelpText(`Space: ${this.transformControls.space.toUpperCase()}`)
-    }
+    // Toggle between local and world space for custom transforms
+    this.transformSpace = this.transformSpace === 'local' ? 'world' : 'local'
+    console.log(`Transform space: ${this.transformSpace}`)
+    
+    // Show visual feedback
+    this.updateHelpText(`Space: ${this.transformSpace.toUpperCase()}`)
   },
   
   updateHelpText(message) {
@@ -737,32 +793,67 @@ const ShowcaseRoom = {
       overlay.remove()
     }, 2000)
   },
+  
+  syncObjectToPhoenix(object) {
+    if (!object || !object.userData.id) return
+    
+    // Send updated transform to Phoenix
+    this.pushEvent("update_component", {
+      id: object.userData.id,
+      position: {
+        x: object.position.x,
+        y: object.position.y,
+        z: object.position.z
+      },
+      rotation: {
+        x: object.rotation.x,
+        y: object.rotation.y,
+        z: object.rotation.z
+      },
+      scale: {
+        x: object.scale.x,
+        y: object.scale.y,
+        z: object.scale.z
+      }
+    })
+  },
 
   getCompleteSceneState() {
     // Collect all object states
-    const objects = this.objects.map(obj => ({
-      id: obj.userData.id,
-      type: obj.userData.type,
-      position: {
-        x: obj.position.x,
-        y: obj.position.y,
-        z: obj.position.z
-      },
-      rotation: {
-        x: obj.rotation.x,
-        y: obj.rotation.y,
-        z: obj.rotation.z
-      },
-      scale: {
-        x: obj.scale.x,
-        y: obj.scale.y,
-        z: obj.scale.z
-      },
-      color: obj.material && obj.material.color ? '#' + obj.material.color.getHexString() : '#ffffff',
-      rotating: obj.userData.rotating || false,
-      rotationSpeedX: obj.userData.rotationSpeedX || 0.01,
-      rotationSpeedY: obj.userData.rotationSpeedY || 0.01
-    }))
+    const objects = this.objects.map(obj => {
+      const baseData = {
+        id: obj.userData.id,
+        type: obj.userData.type,
+        position: {
+          x: obj.position.x,
+          y: obj.position.y,
+          z: obj.position.z
+        },
+        rotation: {
+          x: obj.rotation.x,
+          y: obj.rotation.y,
+          z: obj.rotation.z
+        },
+        scale: {
+          x: obj.scale.x,
+          y: obj.scale.y,
+          z: obj.scale.z
+        },
+        rotating: obj.userData.rotating || false,
+        rotationSpeedX: obj.userData.rotationSpeedX || 0.01,
+        rotationSpeedY: obj.userData.rotationSpeedY || 0.01
+      }
+      
+      // Add type-specific data
+      if (obj.userData.type === 'glb') {
+        baseData.filename = obj.userData.filename
+        baseData.color = '#ffffff' // GLB models don't have a single color
+      } else {
+        baseData.color = obj.material && obj.material.color ? '#' + obj.material.color.getHexString() : '#ffffff'
+      }
+      
+      return baseData
+    })
     
     // Collect scene configuration
     const sceneConfig = {
@@ -799,6 +890,77 @@ const ShowcaseRoom = {
     }
     
     return { objects, scene_config: sceneConfig }
+  },
+
+  loadGLBFile(file, dropEvent) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const arrayBuffer = e.target.result
+      
+      // Calculate drop position
+      const rect = this.el.getBoundingClientRect()
+      const x = ((dropEvent.clientX - rect.left) / rect.width) * 2 - 1
+      const y = -((dropEvent.clientY - rect.top) / rect.height) * 2 + 1
+      
+      // Find intersection with floor
+      const raycaster = new this.THREE.Raycaster()
+      raycaster.setFromCamera(new this.THREE.Vector2(x, y), this.camera)
+      const floorPlane = new this.THREE.Plane(new this.THREE.Vector3(0, 1, 0), 0)
+      const intersectPoint = new this.THREE.Vector3()
+      raycaster.ray.intersectPlane(floorPlane, intersectPoint)
+      
+      this.gltfLoader.parse(arrayBuffer, '', (gltf) => {
+        const model = gltf.scene
+        
+        // Position at drop location
+        model.position.copy(intersectPoint)
+        
+        // Scale model to reasonable size if needed
+        const box = new this.THREE.Box3().setFromObject(model)
+        const size = box.getSize(new this.THREE.Vector3())
+        const maxSize = Math.max(size.x, size.y, size.z)
+        if (maxSize > 2) {
+          const scale = 2 / maxSize
+          model.scale.setScalar(scale)
+        }
+        
+        // Add to scene and objects
+        model.userData = {
+          type: 'glb',
+          id: Date.now(),
+          filename: file.name,
+          rotating: false,
+          color: '#ffffff'
+        }
+        
+        // Enable shadows for all meshes in the model
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true
+            child.receiveShadow = true
+          }
+        })
+        
+        this.scene.add(model)
+        this.objects.push(model)
+        
+        // Notify Phoenix
+        this.pushEvent('component_added', {
+          type: 'glb',
+          x: model.position.x,
+          y: model.position.y,
+          z: model.position.z,
+          id: model.userData.id.toString(),
+          filename: file.name,
+          rotating: false
+        })
+        
+        console.log('Loaded GLB model:', file.name)
+      }, (error) => {
+        console.error('Error loading GLB:', error)
+      })
+    }
+    reader.readAsArrayBuffer(file)
   },
 
   destroyed() {

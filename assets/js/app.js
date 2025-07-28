@@ -23,7 +23,7 @@ import {LiveSocket} from "phoenix_live_view"
 import topbar from "../vendor/topbar"
 
 // Import Hooks
-import ShowcaseRoom from "./hooks/showcase_room_clean"
+import ShowcaseRoom from "./hooks/showcase_room"
 import ShowcaseGrid from "./hooks/showcase_grid"
 import DraggableComponent from "./hooks/draggable_component"
 

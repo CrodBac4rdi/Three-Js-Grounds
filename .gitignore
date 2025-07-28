@@ -35,3 +35,31 @@ showcase-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Database config with passwords
+/config/dev.secret.exs
+/config/prod.secret.exs
+
+# Environment variables
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Elixir Language Server
+/.elixir_ls/
+
+# Dialyzer
+.dialyzer/
+.dialyzer_manifest
+
+# Ignore uploaded files in development
+/uploads/
+/priv/static/uploads/

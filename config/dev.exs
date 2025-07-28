@@ -1,11 +1,13 @@
 import Config
 
 # Configure your database
+# You can override these with environment variables:
+# DATABASE_URL=postgresql://user:pass@localhost/showcase_dev mix phx.server
 config :showcase, Showcase.Repo,
-  username: "bacardi",
-  password: "Limkahvui11!",
-  hostname: "localhost",
-  database: "showcase_dev",
+  username: System.get_env("POSTGRES_USER", "postgres"),
+  password: System.get_env("POSTGRES_PASSWORD", "postgres"),
+  hostname: System.get_env("POSTGRES_HOST", "localhost"),
+  database: System.get_env("POSTGRES_DB", "showcase_dev"),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10

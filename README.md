@@ -7,23 +7,45 @@ A real-time 3D scene editor built with Phoenix LiveView and Three.js. Create, ma
 ## Features
 
 - 🎨 **Drag & Drop Components** - Easily add 3D objects (cubes, spheres) to your scene
-- 🎮 **Transform Controls** - Move, rotate, and scale objects with visual gizmos
-- 💾 **Scene Persistence** - Save and load complete 3D scenes
+- 📦 **GLB/GLTF Support** - Import 3D models via drag & drop
+- 🎮 **Transform Controls** - Move, rotate, and scale objects with custom dragging
+- 💾 **Scene Persistence** - Save and load complete 3D scenes with all properties
 - 🎯 **Intuitive Controls** - Keyboard shortcuts for quick transformations
 - 🌐 **Real-time Updates** - Phoenix LiveView ensures instant synchronization
 - 🎨 **Customizable Properties** - Adjust colors, positions, and animations
-- 📐 **Grid System** - Snap objects to a configurable grid
+- 📐 **Grid System** - Visual grid for spatial reference
 
 ## Quick Start
 
-### Prerequisites
+### Option 1: Docker Compose (Recommended - One Command Setup!)
+
+```bash
+# Clone the repository
+git clone https://github.com/CrodBac4rdi/Three-Js-Grounds.git
+cd Three-Js-Grounds
+
+# Start everything with Docker Compose
+docker-compose up
+
+# Visit http://localhost:4000
+```
+
+That's it! Docker Compose will:
+- Set up PostgreSQL with default credentials (postgres/postgres)
+- Install all Elixir and Node.js dependencies
+- Create and migrate the database
+- Start the Phoenix server
+
+### Option 2: Manual Installation
+
+#### Prerequisites
 
 - Elixir 1.14+ 
 - Erlang/OTP 25+
 - PostgreSQL 14+
 - Node.js 16+
 
-### Installation
+#### Installation Steps
 
 1. **Clone the repository**
    ```bash
@@ -31,30 +53,59 @@ A real-time 3D scene editor built with Phoenix LiveView and Three.js. Create, ma
    cd showcase
    ```
 
-2. **Install dependencies**
+2. **Configure PostgreSQL**
+   
+   First, ensure PostgreSQL is running:
+   ```bash
+   # Ubuntu/Debian
+   sudo service postgresql start
+   
+   # macOS with Homebrew
+   brew services start postgresql
+   ```
+   
+   Then configure the database:
+   ```bash
+   # Option A: Use default postgres user
+   sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+   
+   # Option B: Create a new user
+   sudo -u postgres createuser -P showcase_user
+   # Enter password when prompted
+   ```
+
+3. **Configure the application**
+   ```bash
+   # Copy environment example
+   cp .env.example .env
+   
+   # Edit config/dev.exs with your database credentials
+   # Default configuration uses:
+   # - username: "postgres"
+   # - password: "postgres"
+   # - database: "showcase_dev"
+   ```
+
+4. **Install dependencies**
    ```bash
    mix deps.get
    mix deps.compile
    ```
 
-3. **Setup the database**
+5. **Setup the database**
    ```bash
-   # Create database user (optional if you already have one)
-   sudo -u postgres psql < create_db_user.sql
-   
-   # Create and migrate database
    mix ecto.create
    mix ecto.migrate
    ```
 
-4. **Install Node.js dependencies**
+6. **Install Node.js dependencies**
    ```bash
    cd assets
    npm install
    cd ..
    ```
 
-5. **Start the Phoenix server**
+7. **Start the Phoenix server**
    ```bash
    mix phx.server
    ```
@@ -83,7 +134,7 @@ Now visit [`http://localhost:4000`](http://localhost:4000) to see your 3D Showca
 
 1. **Add Objects**
    - Drag components from the sidebar into the 3D viewport
-   - Objects snap to the grid automatically
+   - Drag & drop .glb or .gltf files to import 3D models
 
 2. **Customize Objects**
    - Select an object by clicking on it
@@ -131,14 +182,34 @@ showcase/
 
 ### Database Configuration
 
-Edit `config/dev.exs` to match your PostgreSQL setup:
+#### Using Environment Variables (Recommended)
+
+Create a `.env` file based on `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your database credentials:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/showcase_dev
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=showcase_dev
+```
+
+#### Direct Configuration
+
+Alternatively, edit `config/dev.exs`:
 
 ```elixir
 config :showcase, Showcase.Repo,
-  username: "your_db_user",
-  password: "your_db_password",
+  username: "postgres",
+  password: "postgres",
   hostname: "localhost",
-  database: "showcase_dev"
+  database: "showcase_dev",
+  pool_size: 10
 ```
 
 ### Scene Configuration
@@ -197,10 +268,33 @@ MIX_ENV=prod mix release
 2. **Database connection errors**
    - Ensure PostgreSQL is running: `sudo service postgresql start`
    - Check your database credentials in `config/dev.exs`
+   - Verify PostgreSQL is accepting connections:
+     ```bash
+     sudo -u postgres psql -c "SELECT 1;"
+     ```
+   - Common fixes:
+     ```bash
+     # Reset postgres password
+     sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+     
+     # Check PostgreSQL is listening on correct port
+     sudo netstat -plnt | grep postgres
+     ```
 
 3. **Assets not loading**
    - Run `mix deps.get` and `cd assets && npm install`
    - Ensure watchers are running with `mix phx.server`
+   - Clear build cache if needed:
+     ```bash
+     rm -rf _build deps assets/node_modules
+     mix deps.get
+     cd assets && npm install && cd ..
+     ```
+
+4. **GLB models not loading**
+   - Ensure the file is a valid .glb or .gltf format
+   - Check browser console for errors
+   - Try with a smaller model file first
 
 ## Contributing
 

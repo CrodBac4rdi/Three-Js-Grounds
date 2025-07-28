@@ -1,0 +1,33 @@
+# Dependencies
+deps/
+_build/
+.elixir_ls/
+
+# Node
+assets/node_modules/
+
+# Static files
+priv/static/
+
+# Test files
+test/
+.github/
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.env.*
+
+# Misc
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

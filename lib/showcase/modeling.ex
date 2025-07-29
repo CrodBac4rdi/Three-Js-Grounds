@@ -18,7 +18,9 @@ defmodule Showcase.Modeling do
 
   """
   def list_models do
-    Repo.all(Model)
+    Model
+    |> order_by([m], desc: m.inserted_at)
+    |> Repo.all()
   end
 
   @doc """

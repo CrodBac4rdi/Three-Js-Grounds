@@ -55,63 +55,177 @@ const ShowcaseRoom = {
     this.handleEvent("load_scene", ({objects, scene_config, camera_state, lighting_config}) => {
       this.loadScene(objects, scene_config, camera_state, lighting_config)
     })
+    
+    // Handle scene export as GLB
+    this.handleEvent("export_scene_as_glb", () => {
+      console.log("Exporting scene as GLB")
+      this.exportSceneAsGLB()
+    })
+    
+    // Handle light toggling
+    this.handleEvent("toggle_light", ({type, enabled}) => {
+      if (this.lights && this.lights[type]) {
+        this.lights[type].visible = enabled
+      }
+    })
+    
+    // Handle exposure adjustment
+    this.handleEvent("adjust_exposure", ({value}) => {
+      if (this.renderer) {
+        this.renderer.toneMappingExposure = parseFloat(value)
+      }
+    })
   },
 
   initThree() {
     // Get scene config from Phoenix
     const sceneConfig = JSON.parse(this.el.dataset.sceneConfig || '{}')
+    console.log('Scene config:', sceneConfig)
+    console.log('Container dimensions:', this.el.clientWidth, this.el.clientHeight)
     
     Promise.all([
       import('three'),
       import('three/examples/jsm/controls/OrbitControls.js'),
-      import('three/examples/jsm/loaders/GLTFLoader.js')
-    ]).then(([THREE, OrbitControlsModule, GLTFLoaderModule]) => {
-      console.log('Modules loaded:', { THREE, OrbitControlsModule, GLTFLoaderModule })
+      import('three/examples/jsm/loaders/GLTFLoader.js'),
+      import('three/examples/jsm/exporters/GLTFExporter.js'),
+      import('three/examples/jsm/loaders/RGBELoader.js')
+    ]).then(([THREE, OrbitControlsModule, GLTFLoaderModule, GLTFExporterModule, RGBELoaderModule]) => {
+      console.log('Modules loaded:', { THREE, OrbitControlsModule, GLTFLoaderModule, GLTFExporterModule, RGBELoaderModule })
       
       this.THREE = THREE
       const { OrbitControls } = OrbitControlsModule
       const { GLTFLoader } = GLTFLoaderModule
+      const { GLTFExporter } = GLTFExporterModule
       
       const container = this.el
       
-      // Scene - controlled by Phoenix config
-      const scene = new THREE.Scene()
-      scene.background = new THREE.Color(sceneConfig.background_color || '#1a1a1a')
+      // Ensure container has dimensions
+      if (container.clientWidth === 0 || container.clientHeight === 0) {
+        console.error('Container has no dimensions:', container.clientWidth, container.clientHeight)
+        // Try again after a short delay
+        setTimeout(() => this.initThree(), 100)
+        return
+      }
       
-      // Camera
-      const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000)
-      camera.position.set(10, 10, 10)
+      // Scene - Professional Design Studio
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color(sceneConfig.background_color || '#2a2a2a') // Dark studio grey
+      
+      // Camera - Professional studio angle
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000)
+      camera.position.set(5, 3, 8) // Studio view angle
       camera.lookAt(0, 0, 0)
       
-      // Renderer
-      const renderer = new THREE.WebGLRenderer({ antialias: true })
+      // Renderer - High quality settings
+      const renderer = new THREE.WebGLRenderer({ 
+        antialias: true,
+        alpha: true,
+        logarithmicDepthBuffer: true
+      })
       renderer.setSize(container.clientWidth, container.clientHeight)
+      renderer.shadowMap.enabled = true
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap
+      renderer.toneMapping = THREE.ACESFilmicToneMapping
+      renderer.toneMappingExposure = 1
+      renderer.outputColorSpace = THREE.SRGBColorSpace
       container.appendChild(renderer.domElement)
       
       // Create scene elements from Phoenix config
       this.createSceneElements(THREE, scene, sceneConfig)
       
-      // Lighting
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4)
+      // Studio ground plane - infinity cove style
+      const groundGeometry = new THREE.PlaneGeometry(100, 100)
+      const groundMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x4a4a4a,
+        roughness: 0.9,
+        metalness: 0.0
+      })
+      const ground = new THREE.Mesh(groundGeometry, groundMaterial)
+      ground.rotation.x = -Math.PI / 2
+      ground.receiveShadow = true
+      ground.name = 'ground'
+      scene.add(ground)
+      
+      // Remove backdrop for cleaner look
+      // Just use the dark background
+      
+      // Remove HDRI for now - rely on direct lighting
+      // This prevents the overly bright environment
+      
+      // Professional Studio Lighting Setup
+      
+      // Subtle ambient for base illumination
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.2)
       scene.add(ambientLight)
       
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6)
-      directionalLight.position.set(5, 8, 5)
-      directionalLight.castShadow = true
-      scene.add(directionalLight)
+      // Key light - main directional light
+      const keyLight = new THREE.DirectionalLight(0xffffff, 0.8)
+      keyLight.position.set(5, 10, 5)
+      keyLight.castShadow = true
+      keyLight.shadow.mapSize.width = 2048
+      keyLight.shadow.mapSize.height = 2048
+      keyLight.shadow.camera.near = 0.5
+      keyLight.shadow.camera.far = 50
+      keyLight.shadow.camera.left = -15
+      keyLight.shadow.camera.right = 15
+      keyLight.shadow.camera.top = 15
+      keyLight.shadow.camera.bottom = -15
+      keyLight.shadow.bias = -0.0005
+      scene.add(keyLight)
       
-      // Controls
+      // Fill light - softer from opposite side
+      const fillLight = new THREE.DirectionalLight(0xffffff, 0.4)
+      fillLight.position.set(-5, 8, -5)
+      scene.add(fillLight)
+      
+      // Rim light - for edge highlights
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.3)
+      rimLight.position.set(0, 10, -10)
+      scene.add(rimLight)
+      
+      // Spotlight on center modeling area
+      const spotlight = new THREE.SpotLight(0xffffff, 1)
+      spotlight.position.set(0, 15, 0)
+      spotlight.target.position.set(0, 0, 0)
+      spotlight.angle = Math.PI / 6
+      spotlight.penumbra = 0.2
+      spotlight.decay = 2
+      spotlight.distance = 30
+      spotlight.castShadow = true
+      spotlight.shadow.mapSize.width = 1024
+      spotlight.shadow.mapSize.height = 1024
+      scene.add(spotlight)
+      scene.add(spotlight.target)
+      
+      // Store lights for later control
+      this.lights = {
+        ambient: ambientLight,
+        key: keyLight,
+        fill: fillLight,
+        rim: rimLight,
+        spot: spotlight
+      }
+      
+      // Professional camera controls
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
       controls.dampingFactor = 0.05
-      controls.minDistance = 1
-      controls.maxDistance = 100
+      controls.minDistance = 3
+      controls.maxDistance = 50
+      
+      // Professional viewing angles
+      controls.maxPolarAngle = Math.PI * 0.85 // Can look mostly down but not under
+      controls.minPolarAngle = 0.1 // Slight limit at top
+      
+      // Focus on center of modeling area
+      controls.target.set(0, 0, 0)
       
       // Skip TransformControls for now - we'll use custom dragging
       let transformControls = null
       
-      // Initialize GLTF loader
+      // Initialize GLTF loader and exporter
       this.gltfLoader = new GLTFLoader()
+      this.gltfExporter = new GLTFExporter()
       
       // Store references
       this.scene = scene
@@ -159,6 +273,8 @@ const ShowcaseRoom = {
       
       // Listen for drop events
       this.setupDropZone()
+    }).catch(error => {
+      console.error('Error loading Three.js modules:', error)
     })
   },
 
@@ -283,7 +399,11 @@ const ShowcaseRoom = {
 
   createCube(position) {
     const geometry = new this.THREE.BoxGeometry(0.5, 0.5, 0.5)
-    const material = new this.THREE.MeshPhongMaterial({ color: 0x00ff00 })
+    const material = new this.THREE.MeshStandardMaterial({ 
+      color: 0x2194ce,
+      roughness: 0.5,
+      metalness: 0.1
+    })
     const cube = new this.THREE.Mesh(geometry, material)
     
     cube.position.copy(position)
@@ -305,7 +425,11 @@ const ShowcaseRoom = {
 
   createSphere(position) {
     const geometry = new this.THREE.SphereGeometry(0.3, 32, 16)
-    const material = new this.THREE.MeshPhongMaterial({ color: 0x0066ff })
+    const material = new this.THREE.MeshStandardMaterial({ 
+      color: 0xff6b6b,
+      roughness: 0.3,
+      metalness: 0.2
+    })
     const sphere = new this.THREE.Mesh(geometry, material)
     
     sphere.position.copy(position)
@@ -494,6 +618,11 @@ const ShowcaseRoom = {
       }
       
       this.selectedObject = null
+      
+      // Reset cursor
+      if (this.renderer && this.renderer.domElement) {
+        this.renderer.domElement.style.cursor = 'auto'
+      }
     }
   },
   
@@ -537,16 +666,29 @@ const ShowcaseRoom = {
     let offset = new this.THREE.Vector3()
     let intersection = new this.THREE.Vector3()
     
+    // Initialize transform mode
+    this.transformMode = 'translate' // translate, rotate, scale
+    this.transformSpace = 'world' // world, local
+    
+    // For rotation
+    let startRotation = new this.THREE.Euler()
+    let startMouseX = 0
+    let startMouseY = 0
+    
+    // For scale
+    let startScale = new this.THREE.Vector3()
+    let startDistance = 0
+    
     // Listen for shift key to change drag mode
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Shift' && isDragging) {
+      if (event.key === 'Shift' && isDragging && this.transformMode === 'translate') {
         dragMode = 'vertical'
         updateDragPlane()
       }
     })
     
     window.addEventListener('keyup', (event) => {
-      if (event.key === 'Shift' && isDragging) {
+      if (event.key === 'Shift' && isDragging && this.transformMode === 'translate') {
         dragMode = 'horizontal'
         updateDragPlane()
       }
@@ -579,17 +721,28 @@ const ShowcaseRoom = {
         isDragging = true
         this.controls.enabled = false
         
-        // Set initial drag plane
-        updateDragPlane()
-        
-        // Calculate offset
         const rect = this.renderer.domElement.getBoundingClientRect()
         this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
         
-        this.raycaster.setFromCamera(this.mouse, this.camera)
-        if (this.raycaster.ray.intersectPlane(dragPlane, intersection)) {
-          offset.copy(intersection).sub(this.selectedObject.position)
+        if (this.transformMode === 'translate') {
+          // Set initial drag plane
+          updateDragPlane()
+          
+          // Calculate offset
+          this.raycaster.setFromCamera(this.mouse, this.camera)
+          if (this.raycaster.ray.intersectPlane(dragPlane, intersection)) {
+            offset.copy(intersection).sub(this.selectedObject.position)
+          }
+        } else if (this.transformMode === 'rotate') {
+          // Store initial rotation and mouse position
+          startRotation.copy(this.selectedObject.rotation)
+          startMouseX = event.clientX
+          startMouseY = event.clientY
+        } else if (this.transformMode === 'scale') {
+          // Store initial scale and mouse distance
+          startScale.copy(this.selectedObject.scale)
+          startDistance = Math.sqrt(event.clientX * event.clientX + event.clientY * event.clientY)
         }
       }
     })
@@ -597,26 +750,53 @@ const ShowcaseRoom = {
     this.renderer.domElement.addEventListener('mousemove', (event) => {
       if (isDragging && this.selectedObject) {
         const rect = this.renderer.domElement.getBoundingClientRect()
-        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
         
-        this.raycaster.setFromCamera(this.mouse, this.camera)
+        if (this.transformMode === 'translate') {
+          this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+          this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+          
+          this.raycaster.setFromCamera(this.mouse, this.camera)
+          
+          if (this.raycaster.ray.intersectPlane(dragPlane, intersection)) {
+            const newPosition = intersection.sub(offset)
+            
+            if (dragMode === 'horizontal') {
+              // Keep Y constant when dragging horizontally
+              newPosition.y = this.selectedObject.position.y
+            }
+            
+            this.selectedObject.position.copy(newPosition)
+          }
+        } else if (this.transformMode === 'rotate') {
+          // Calculate rotation based on mouse movement
+          const deltaX = (event.clientX - startMouseX) * 0.01
+          const deltaY = (event.clientY - startMouseY) * 0.01
+          
+          this.selectedObject.rotation.x = startRotation.x + deltaY
+          this.selectedObject.rotation.y = startRotation.y + deltaX
+          this.selectedObject.rotation.z = startRotation.z
+        } else if (this.transformMode === 'scale') {
+          // Calculate scale based on mouse distance from center
+          const currentDistance = Math.sqrt(event.clientX * event.clientX + event.clientY * event.clientY)
+          const scaleFactor = currentDistance / startDistance
+          
+          // Apply uniform scaling
+          this.selectedObject.scale.set(
+            startScale.x * scaleFactor,
+            startScale.y * scaleFactor,
+            startScale.z * scaleFactor
+          )
+          
+          // Clamp scale to reasonable values
+          const minScale = 0.1
+          const maxScale = 10
+          this.selectedObject.scale.clampScalar(minScale, maxScale)
+        }
         
-        if (this.raycaster.ray.intersectPlane(dragPlane, intersection)) {
-          const newPosition = intersection.sub(offset)
-          
-          if (dragMode === 'horizontal') {
-            // Keep Y constant when dragging horizontally
-            newPosition.y = this.selectedObject.position.y
-          }
-          
-          this.selectedObject.position.copy(newPosition)
-          
-          // Update selection helper
-          if (this.selectionHelper) {
-            const box = new this.THREE.Box3().setFromObject(this.selectedObject)
-            this.selectionHelper.box = box
-          }
+        // Update selection helper for all transform modes
+        if (this.selectionHelper) {
+          const box = new this.THREE.Box3().setFromObject(this.selectedObject)
+          this.selectionHelper.box = box
         }
       }
     })
@@ -640,7 +820,7 @@ const ShowcaseRoom = {
   },
 
   loadScene(objects, sceneConfig, cameraState, lightingConfig) {
-    // Clear existing objects
+    // Clear existing objects but preserve ground and lights
     this.objects.forEach(obj => {
       this.scene.remove(obj)
       if (obj.geometry) obj.geometry.dispose()
@@ -658,8 +838,15 @@ const ShowcaseRoom = {
       // Update grid
       if (this.gridHelper) {
         this.scene.remove(this.gridHelper)
-        this.gridHelper.geometry.dispose()
-        this.gridHelper.material.dispose()
+        if (this.gridHelper.geometry) this.gridHelper.geometry.dispose()
+        if (this.gridHelper.material) {
+          if (Array.isArray(this.gridHelper.material)) {
+            this.gridHelper.material.forEach(m => m.dispose())
+          } else {
+            this.gridHelper.material.dispose()
+          }
+        }
+        this.gridHelper = null
       }
       
       if (sceneConfig.grid_visible) {
@@ -759,8 +946,23 @@ const ShowcaseRoom = {
     this.transformMode = mode
     
     // Show visual feedback
-    const modeText = mode === 'translate' ? 'Move (W)' : mode === 'rotate' ? 'Rotate (E)' : 'Scale (R)'
+    const modeText = mode === 'translate' ? 'Move Mode (W)' : mode === 'rotate' ? 'Rotate Mode (E)' : 'Scale Mode (R)'
     this.updateHelpText(modeText)
+    
+    // Update cursor style based on mode
+    if (this.renderer && this.renderer.domElement) {
+      switch(mode) {
+        case 'translate':
+          this.renderer.domElement.style.cursor = 'move'
+          break
+        case 'rotate':
+          this.renderer.domElement.style.cursor = 'alias'
+          break
+        case 'scale':
+          this.renderer.domElement.style.cursor = 'nwse-resize'
+          break
+      }
+    }
   },
   
   toggleTransformSpace() {
@@ -981,6 +1183,49 @@ const ShowcaseRoom = {
       })
     }
   },
+  
+  exportSceneAsGLB() {
+    if (!this.gltfExporter || !this.scene) return
+    
+    // Create a clean scene for export with only the objects
+    const exportScene = new this.THREE.Scene()
+    
+    // Add all user objects to export scene
+    this.objects.forEach(obj => {
+      const clone = obj.clone(true)
+      exportScene.add(clone)
+    })
+    
+    // Export options
+    const options = {
+      binary: true,
+      includeCustomExtensions: true
+    }
+    
+    // Export the scene
+    this.gltfExporter.parse(
+      exportScene,
+      (result) => {
+        // Success callback
+        if (result instanceof ArrayBuffer) {
+          // Save the binary GLB file
+          const blob = new Blob([result], { type: 'model/gltf-binary' })
+          const link = document.createElement('a')
+          link.href = URL.createObjectURL(blob)
+          link.download = `scene_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.glb`
+          link.click()
+          
+          // Clean up
+          URL.revokeObjectURL(link.href)
+        }
+      },
+      (error) => {
+        // Error callback
+        console.error('Export error:', error)
+      },
+      options
+    )
+  }
   
 }
 

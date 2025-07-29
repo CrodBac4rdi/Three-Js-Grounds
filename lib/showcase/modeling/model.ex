@@ -3,7 +3,7 @@ defmodule Showcase.Modeling.Model do
   import Ecto.Changeset
 
   schema "models" do
-    field :data, {:map, :string}
+    field :data, :map
     field :name, :string
     field :user_id, :id
 

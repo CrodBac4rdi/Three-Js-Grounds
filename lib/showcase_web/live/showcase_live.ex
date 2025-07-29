@@ -15,11 +15,19 @@ defmodule ShowcaseWeb.ShowcaseLive do
       |> assign(:models, [])
       |> assign(:selected_component, nil)
       |> assign(:scene_config, %{
-        background_color: "#1a1a1a",
+        background_color: "#2a2a2a",
         grid_visible: true,
         grid_size: 20,
         grid_divisions: 20
       })
+      |> assign(:lights, %{
+        ambient: true,
+        key: true,
+        fill: true,
+        rim: true,
+        spot: true
+      })
+      |> assign(:exposure, 1.0)
     
     # Always load models, not just for logged-in users
     {:ok, load_all_models(socket)}
@@ -39,21 +47,100 @@ defmodule ShowcaseWeb.ShowcaseLive do
   
   defp load_all_models(socket) do
     models = Modeling.list_models()
+    IO.inspect(models, label: "Loaded models")
+    IO.puts("Number of models: #{length(models)}")
     assign(socket, :models, models)
   end
 
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-blue-900 flex">
-      <!-- GUI Sidebar -->
-      <div class="w-64 bg-blue-800 shadow-lg flex flex-col">
-        <div class="p-4 border-b border-blue-700">
+    <div class="h-screen bg-gray-900 flex flex-col overflow-hidden">
+      <!-- Lighting Toolbar -->
+      <div class="bg-gray-800 shadow-md px-4 py-2 flex items-center space-x-4 border-b border-gray-700">
+        <h3 class="font-semibold text-gray-300 mr-4">Lighting:</h3>
+        
+        <button 
+          phx-click="toggle_light" 
+          phx-value-type="ambient"
+          class={"px-3 py-1 rounded transition-colors " <> if(@lights.ambient, do: "bg-blue-500 text-white", else: "bg-gray-300 text-gray-700")}
+        >
+          Ambient
+        </button>
+        
+        <button 
+          phx-click="toggle_light" 
+          phx-value-type="key"
+          class={"px-3 py-1 rounded transition-colors " <> if(@lights.key, do: "bg-blue-500 text-white", else: "bg-gray-300 text-gray-700")}
+        >
+          Key Light
+        </button>
+        
+        <button 
+          phx-click="toggle_light" 
+          phx-value-type="fill"
+          class={"px-3 py-1 rounded transition-colors " <> if(@lights.fill, do: "bg-blue-500 text-white", else: "bg-gray-300 text-gray-700")}
+        >
+          Fill Light
+        </button>
+        
+        <button 
+          phx-click="toggle_light" 
+          phx-value-type="rim"
+          class={"px-3 py-1 rounded transition-colors " <> if(@lights.rim, do: "bg-blue-500 text-white", else: "bg-gray-300 text-gray-700")}
+        >
+          Rim Light
+        </button>
+        
+        <button 
+          phx-click="toggle_light" 
+          phx-value-type="spot"
+          class={"px-3 py-1 rounded transition-colors " <> if(@lights.spot, do: "bg-blue-500 text-white", else: "bg-gray-300 text-gray-700")}
+        >
+          Spotlight
+        </button>
+        
+        <form class="ml-auto flex items-center space-x-2" phx-change="adjust_exposure">
+          <label class="text-sm text-gray-400">Exposure:</label>
+          <input 
+            type="range" 
+            name="value"
+            min="0.5" 
+            max="2" 
+            step="0.1" 
+            value={@exposure}
+            class="w-32"
+          />
+          <span class="text-sm text-gray-300"><%= @exposure %></span>
+        </form>
+      </div>
+      
+      <div class="flex-1 relative overflow-hidden">
+        <!-- Main Content - 3D Scene -->
+        <div 
+          id="showcase-room-container" 
+          phx-hook="ShowcaseRoom"
+          phx-update="ignore"
+          data-scene-config={Jason.encode!(@scene_config)}
+          class="absolute inset-0 bg-gray-900"
+        >
+        </div>
+        
+        <!-- GUI Sidebar - Overlayed -->
+        <div class="absolute left-0 top-0 bottom-0 w-64 bg-gray-800 bg-opacity-90 shadow-lg flex flex-col z-10">
+          <div class="p-4 border-b border-gray-700">
           <h2 class="text-white font-bold text-lg">Components</h2>
           <button 
             phx-click="save_scene"
             class="mt-2 w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
           >
             Save Scene
+          </button>
+          
+          <button 
+            phx-click="export_scene"
+            class="mt-2 w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors"
+          >
+            Export as GLB
           </button>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
@@ -63,20 +150,20 @@ defmodule ShowcaseWeb.ShowcaseLive do
               draggable="true"
               data-component-type="cube"
               phx-hook="DraggableComponent"
-              class="bg-blue-700 rounded p-3 cursor-move hover:bg-blue-600 transition-colors"
+              class="bg-gray-700 rounded p-3 cursor-move hover:bg-gray-600 transition-colors"
             >
               <div class="text-white text-sm font-medium">Cube</div>
-              <div class="text-blue-200 text-xs">Basic 3D cube</div>
+              <div class="text-gray-400 text-xs">Basic 3D cube</div>
             </div>
             <div 
               id="component-sphere"
               draggable="true"
               data-component-type="sphere"
               phx-hook="DraggableComponent"
-              class="bg-blue-700 rounded p-3 cursor-move hover:bg-blue-600 transition-colors"
+              class="bg-gray-700 rounded p-3 cursor-move hover:bg-gray-600 transition-colors"
             >
               <div class="text-white text-sm font-medium">Sphere</div>
-              <div class="text-blue-200 text-xs">3D sphere</div>
+              <div class="text-gray-400 text-xs">3D sphere</div>
             </div>
           </div>
           
@@ -85,17 +172,29 @@ defmodule ShowcaseWeb.ShowcaseLive do
             <h3 class="text-white font-bold mb-2">Saved Scenes</h3>
             <div class="space-y-2 max-h-48 overflow-y-auto">
               <%= for model <- @models do %>
-                <div 
-                  phx-click="load_scene"
-                  phx-value-id={model.id}
-                  class="bg-blue-700 rounded p-2 cursor-pointer hover:bg-blue-600 transition-colors"
-                >
-                  <div class="text-white text-sm"><%= model.name %></div>
-                  <div class="text-blue-200 text-xs"><%= Calendar.strftime(model.inserted_at, "%Y-%m-%d %H:%M") %></div>
+                <div class="bg-gray-700 rounded p-2 hover:bg-gray-600 transition-colors relative group">
+                  <div 
+                    phx-click="load_scene"
+                    phx-value-id={model.id}
+                    class="cursor-pointer"
+                  >
+                    <div class="text-white text-sm"><%= model.name %></div>
+                    <div class="text-gray-400 text-xs"><%= Calendar.strftime(model.inserted_at, "%Y-%m-%d %H:%M") %></div>
+                  </div>
+                  <button
+                    phx-click="delete_scene"
+                    phx-value-id={model.id}
+                    class="absolute top-1 right-1 text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                    data-confirm="Are you sure you want to delete this scene?"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                  </button>
                 </div>
               <% end %>
               <%= if @models == [] do %>
-                <div class="text-blue-200 text-sm">No saved scenes yet</div>
+                <div class="text-gray-400 text-sm">No saved scenes yet</div>
               <% end %>
             </div>
           </div>
@@ -108,7 +207,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
             <form phx-change="update_properties" class="space-y-3">
               <input type="hidden" name="component_id" value={@selected_component.id} />
               <div>
-                <label class="text-blue-200 text-xs">Position X</label>
+                <label class="text-gray-400 text-xs">Position X</label>
                 <input 
                   type="number" 
                   name="position_x"
@@ -118,7 +217,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
                 />
               </div>
               <div>
-                <label class="text-blue-200 text-xs">Position Y</label>
+                <label class="text-gray-400 text-xs">Position Y</label>
                 <input 
                   type="number" 
                   name="position_y"
@@ -128,7 +227,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
                 />
               </div>
               <div>
-                <label class="text-blue-200 text-xs">Position Z</label>
+                <label class="text-gray-400 text-xs">Position Z</label>
                 <input 
                   type="number" 
                   name="position_z"
@@ -138,7 +237,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
                 />
               </div>
               <div>
-                <label class="text-blue-200 text-xs">Color</label>
+                <label class="text-gray-400 text-xs">Color</label>
                 <input 
                   type="color" 
                   name="color"
@@ -149,52 +248,12 @@ defmodule ShowcaseWeb.ShowcaseLive do
             </form>
           </div>
         <% end %>
-      </div>
-
-      <!-- Main Content -->
-      <div class="flex-1 flex flex-col">
-        <nav class="bg-blue-800 shadow-lg">
-          <div class="px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16">
-              <div class="flex items-center">
-                <a href="/" class="text-white font-bold text-xl">
-                  3D Showcase
-                </a>
-              </div>
-              <div class="flex items-center space-x-4">
-                <%= if @current_user do %>
-                  <span class="text-white">Hello, <%= @current_user.email %>!</span>
-                  <.link href="/users/log_out" method="delete" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors">
-                    Logout
-                  </.link>
-                <% else %>
-                  <.link href="/users/log_in" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition-colors">
-                    Login
-                  </.link>
-                  <.link href="/users/register" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors">
-                    Register
-                  </.link>
-                <% end %>
-              </div>
-            </div>
-          </div>
-        </nav>
+        </div>
         
-        
-        <div class="flex-1 p-4 relative">
-          <div 
-            id="showcase-room-container" 
-            phx-hook="ShowcaseRoom"
-            phx-update="ignore"
-            class="w-full h-full bg-gray-900 rounded-lg"
-          >
-          </div>
-          
-          <!-- Help text -->
-          <div class="absolute bottom-4 left-4 bg-black bg-opacity-50 text-white text-xs p-2 rounded">
-            <div>Click: Select | W: Move | E: Rotate | R: Scale | Q: Toggle Local/World | Delete: Remove</div>
-            <div>Scroll: Zoom | Right-drag: Orbit camera | Drag GLB files to load models</div>
-          </div>
+        <!-- Help text -->
+        <div class="absolute bottom-4 left-4 bg-black bg-opacity-50 text-white text-xs p-2 rounded z-20">
+          <div>Click: Select | W: Move | E: Rotate | R: Scale | Q: Toggle Local/World | Delete: Remove</div>
+          <div>Scroll: Zoom | Right-drag: Orbit camera | Drag GLB files to load models</div>
         </div>
       </div>
     </div>
@@ -304,6 +363,60 @@ defmodule ShowcaseWeb.ShowcaseLive do
     IO.puts("Save scene event received")
     # Request current state from Three.js
     {:noreply, push_event(socket, "request_scene_state", %{})}
+  end
+  
+  def handle_event("export_scene", _params, socket) do
+    IO.puts("Export scene event received")
+    # Request scene export from Three.js
+    {:noreply, push_event(socket, "export_scene_as_glb", %{})}
+  end
+  
+  def handle_event("delete_scene", %{"id" => id}, socket) do
+    case Modeling.get_model!(id) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Scene not found")}
+        
+      model ->
+        case Modeling.delete_model(model) do
+          {:ok, _} ->
+            {:noreply, 
+             socket
+             |> put_flash(:info, "Scene deleted successfully")
+             |> load_all_models()
+            }
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Failed to delete scene")}
+        end
+    end
+  end
+  
+  def handle_event("toggle_light", %{"type" => light_type}, socket) do
+    lights = socket.assigns.lights
+    updated_lights = Map.put(lights, String.to_existing_atom(light_type), !lights[String.to_existing_atom(light_type)])
+    
+    {:noreply, 
+     socket
+     |> assign(:lights, updated_lights)
+     |> push_event("toggle_light", %{type: light_type, enabled: updated_lights[String.to_existing_atom(light_type)]})
+    }
+  end
+  
+  def handle_event("adjust_exposure", params, socket) do
+    exposure = case params do
+      %{"value" => value} when is_binary(value) -> 
+        {parsed, _} = Float.parse(value)
+        parsed
+      %{"value" => value} when is_number(value) -> 
+        value
+      _ -> 
+        1.0
+    end
+    
+    {:noreply,
+     socket
+     |> assign(:exposure, exposure)
+     |> push_event("adjust_exposure", %{value: exposure})
+    }
   end
   
   def handle_event("scene_state_ready", %{"objects" => objects, "scene_config" => scene_config}, socket) do

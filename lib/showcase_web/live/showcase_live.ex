@@ -25,9 +25,15 @@ defmodule ShowcaseWeb.ShowcaseLive do
         key: true,
         fill: true,
         rim: true,
-        spot: true
+        spot: true,
+        rail: true
       })
       |> assign(:exposure, 1.0)
+      |> assign(:show_parametric_dialog, false)
+      |> assign(:parametric_shape, nil)
+      |> assign(:parametric_params, %{})
+      |> assign(:transform_mode, "translate")
+      |> assign(:transform_space, "world")
     
     # Always load models, not just for logged-in users
     {:ok, load_all_models(socket)}
@@ -99,19 +105,65 @@ defmodule ShowcaseWeb.ShowcaseLive do
           Spotlight
         </button>
         
-        <form class="ml-auto flex items-center space-x-2" phx-change="adjust_exposure">
-          <label class="text-sm text-gray-400">Exposure:</label>
-          <input 
-            type="range" 
-            name="value"
-            min="0.5" 
-            max="2" 
-            step="0.1" 
-            value={@exposure}
-            class="w-32"
-          />
-          <span class="text-sm text-gray-300"><%= @exposure %></span>
-        </form>
+        <button 
+          phx-click="toggle_rail_light" 
+          class={"px-3 py-1 rounded transition-colors " <> if(Map.get(@lights, :rail, true), do: "bg-blue-500 text-white", else: "bg-gray-300 text-gray-700")}
+          title="Draggable light on rail - select and drag to move"
+        >
+          Rail Light
+        </button>
+        
+        <div class="ml-auto flex items-center space-x-4">
+          <!-- Transform Mode Buttons -->
+          <div class="flex items-center space-x-2">
+            <button 
+              phx-click="set_transform_mode" 
+              phx-value-mode="translate"
+              class={"w-8 h-8 rounded text-white flex items-center justify-center transition-colors " <> if(@transform_mode == "translate", do: "bg-blue-600", else: "bg-gray-700 hover:bg-gray-600")}
+              title="Move (W)"
+            >
+              W
+            </button>
+            <button 
+              phx-click="set_transform_mode" 
+              phx-value-mode="rotate"
+              class={"w-8 h-8 rounded text-white flex items-center justify-center transition-colors " <> if(@transform_mode == "rotate", do: "bg-blue-600", else: "bg-gray-700 hover:bg-gray-600")}
+              title="Rotate (E)"
+            >
+              E
+            </button>
+            <button 
+              phx-click="set_transform_mode" 
+              phx-value-mode="scale"
+              class={"w-8 h-8 rounded text-white flex items-center justify-center transition-colors " <> if(@transform_mode == "scale", do: "bg-blue-600", else: "bg-gray-700 hover:bg-gray-600")}
+              title="Scale (R)"
+            >
+              R
+            </button>
+            <button 
+              phx-click="toggle_transform_space"
+              class="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-white flex items-center justify-center transition-colors"
+              title="Toggle Local/World Space (Q)"
+            >
+              Q
+            </button>
+          </div>
+          
+          <!-- Exposure Control -->
+          <form class="flex items-center space-x-2" phx-change="adjust_exposure">
+            <label class="text-sm text-gray-400">Exposure:</label>
+            <input 
+              type="range" 
+              name="value"
+              min="0.5" 
+              max="2" 
+              step="0.1" 
+              value={@exposure}
+              class="w-32"
+            />
+            <span class="text-sm text-gray-300"><%= @exposure %></span>
+          </form>
+        </div>
       </div>
       
       <div class="flex-1 relative overflow-hidden">
@@ -121,6 +173,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
           phx-hook="ShowcaseRoom"
           phx-update="ignore"
           data-scene-config={Jason.encode!(@scene_config)}
+          data-light-config={Jason.encode!(@lights)}
           class="absolute inset-0 bg-gray-900"
         >
         </div>
@@ -144,7 +197,9 @@ defmodule ShowcaseWeb.ShowcaseLive do
           </button>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
-          <div class="space-y-2">
+          <!-- Basic Shapes -->
+          <h3 class="text-white font-bold mb-2">Basic Shapes</h3>
+          <div class="space-y-2 mb-4">
             <div 
               id="component-cube"
               draggable="true"
@@ -165,6 +220,46 @@ defmodule ShowcaseWeb.ShowcaseLive do
               <div class="text-white text-sm font-medium">Sphere</div>
               <div class="text-gray-400 text-xs">3D sphere</div>
             </div>
+          </div>
+          
+          <!-- Parametric Shapes -->
+          <h3 class="text-white font-bold mb-2">Parametric Shapes</h3>
+          <div class="space-y-2">
+            <button 
+              phx-click="show_parametric_dialog"
+              phx-value-shape="box"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded p-2 text-sm transition-colors"
+            >
+              Parametric Box
+            </button>
+            <button 
+              phx-click="show_parametric_dialog"
+              phx-value-shape="cylinder"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded p-2 text-sm transition-colors"
+            >
+              Parametric Cylinder
+            </button>
+            <button 
+              phx-click="show_parametric_dialog"
+              phx-value-shape="torus"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded p-2 text-sm transition-colors"
+            >
+              Parametric Torus
+            </button>
+            <button 
+              phx-click="show_parametric_dialog"
+              phx-value-shape="cone"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded p-2 text-sm transition-colors"
+            >
+              Parametric Cone
+            </button>
+            <button 
+              phx-click="show_parametric_dialog"
+              phx-value-shape="plane"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded p-2 text-sm transition-colors"
+            >
+              Parametric Plane
+            </button>
           </div>
           
           <!-- Saved Scenes -->
@@ -202,10 +297,14 @@ defmodule ShowcaseWeb.ShowcaseLive do
         
         <!-- Properties Panel -->
         <%= if @selected_component do %>
-          <div class="border-t border-blue-700 p-4">
+          <div class="border-t border-gray-700 p-4">
             <h3 class="text-white font-bold mb-3">Properties</h3>
             <form phx-change="update_properties" class="space-y-3">
               <input type="hidden" name="component_id" value={@selected_component.id} />
+              <div>
+                <label class="text-gray-400 text-xs">Type</label>
+                <div class="text-gray-300 text-sm"><%= @selected_component.type %></div>
+              </div>
               <div>
                 <label class="text-gray-400 text-xs">Position X</label>
                 <input 
@@ -213,7 +312,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
                   name="position_x"
                   value={@selected_component.position.x}
                   step="0.1"
-                  class="w-full px-2 py-1 bg-blue-900 text-white rounded"
+                  class="w-full px-2 py-1 bg-gray-700 text-white rounded"
                 />
               </div>
               <div>
@@ -223,7 +322,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
                   name="position_y"
                   value={@selected_component.position.y}
                   step="0.1"
-                  class="w-full px-2 py-1 bg-blue-900 text-white rounded"
+                  class="w-full px-2 py-1 bg-gray-700 text-white rounded"
                 />
               </div>
               <div>
@@ -233,7 +332,7 @@ defmodule ShowcaseWeb.ShowcaseLive do
                   name="position_z"
                   value={@selected_component.position.z}
                   step="0.1"
-                  class="w-full px-2 py-1 bg-blue-900 text-white rounded"
+                  class="w-full px-2 py-1 bg-gray-700 text-white rounded"
                 />
               </div>
               <div>
@@ -242,20 +341,155 @@ defmodule ShowcaseWeb.ShowcaseLive do
                   type="color" 
                   name="color"
                   value={@selected_component.color || "#00ff00"}
-                  class="w-full h-8 bg-blue-900 rounded cursor-pointer"
+                  class="w-full h-8 bg-gray-700 rounded cursor-pointer"
                 />
               </div>
             </form>
+            
+            <%= if @selected_component.type == "glb" do %>
+              <div class="mt-4 pt-4 border-t border-gray-700">
+                <button 
+                  phx-click="convert_to_mesh"
+                  class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded transition-colors"
+                >
+                  Convert to Editable Mesh
+                </button>
+                <p class="text-gray-400 text-xs mt-2">
+                  Break down this model into individual editable mesh parts
+                </p>
+              </div>
+            <% end %>
           </div>
         <% end %>
         </div>
-        
-        <!-- Help text -->
-        <div class="absolute bottom-4 left-4 bg-black bg-opacity-50 text-white text-xs p-2 rounded z-20">
-          <div>Click: Select | W: Move | E: Rotate | R: Scale | Q: Toggle Local/World | Delete: Remove</div>
-          <div>Scroll: Zoom | Right-drag: Orbit camera | Drag GLB files to load models</div>
-        </div>
       </div>
+      
+      <!-- Parametric Shape Dialog -->
+      <%= if @show_parametric_dialog do %>
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="bg-gray-800 rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto">
+            <h2 class="text-white text-xl font-bold mb-4">
+              Create Parametric <%= String.capitalize(@parametric_shape || "") %>
+            </h2>
+            
+            <form phx-submit="create_parametric_shape" class="space-y-4">
+              <input type="hidden" name="shape" value={@parametric_shape} />
+              
+              <%= case @parametric_shape do %>
+                <% "box" -> %>
+                  <div>
+                    <label class="text-gray-300 text-sm">Width</label>
+                    <input type="number" name="width" value="1" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height</label>
+                    <input type="number" name="height" value="1" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Depth</label>
+                    <input type="number" name="depth" value="1" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Width Segments</label>
+                    <input type="number" name="widthSegments" value="1" min="1" max="50" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height Segments</label>
+                    <input type="number" name="heightSegments" value="1" min="1" max="50" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Depth Segments</label>
+                    <input type="number" name="depthSegments" value="1" min="1" max="50" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  
+                <% "cylinder" -> %>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radius Top</label>
+                    <input type="number" name="radiusTop" value="0.5" step="0.1" min="0" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radius Bottom</label>
+                    <input type="number" name="radiusBottom" value="0.5" step="0.1" min="0" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height</label>
+                    <input type="number" name="height" value="1" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radial Segments</label>
+                    <input type="number" name="radialSegments" value="8" min="3" max="64" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height Segments</label>
+                    <input type="number" name="heightSegments" value="1" min="1" max="50" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  
+                <% "torus" -> %>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radius</label>
+                    <input type="number" name="radius" value="0.5" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Tube Radius</label>
+                    <input type="number" name="tube" value="0.2" step="0.05" min="0.01" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radial Segments</label>
+                    <input type="number" name="radialSegments" value="8" min="3" max="64" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Tubular Segments</label>
+                    <input type="number" name="tubularSegments" value="16" min="3" max="64" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  
+                <% "cone" -> %>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radius</label>
+                    <input type="number" name="radius" value="0.5" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height</label>
+                    <input type="number" name="height" value="1" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Radial Segments</label>
+                    <input type="number" name="radialSegments" value="8" min="3" max="64" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  
+                <% "plane" -> %>
+                  <div>
+                    <label class="text-gray-300 text-sm">Width</label>
+                    <input type="number" name="width" value="2" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height</label>
+                    <input type="number" name="height" value="2" step="0.1" min="0.1" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Width Segments</label>
+                    <input type="number" name="widthSegments" value="1" min="1" max="50" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  <div>
+                    <label class="text-gray-300 text-sm">Height Segments</label>
+                    <input type="number" name="heightSegments" value="1" min="1" max="50" class="w-full px-3 py-2 bg-gray-700 text-white rounded" />
+                  </div>
+                  
+                <% _ -> %>
+                  <div class="text-gray-400">Unknown shape type</div>
+              <% end %>
+              
+              <div class="flex gap-2 mt-6">
+                <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded transition-colors">
+                  Create
+                </button>
+                <button type="button" phx-click="close_parametric_dialog" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 rounded transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      <% end %>
     </div>
     """
   end
@@ -271,6 +505,9 @@ defmodule ShowcaseWeb.ShowcaseLive do
     default_color = case type do
       "cube" -> "#00ff00"
       "sphere" -> "#0066ff"
+      "parametric" -> "#4a90e2"
+      "glb" -> "#808080"
+      "mesh" -> "#808080"
       _ -> "#ffffff"
     end
     
@@ -280,10 +517,13 @@ defmodule ShowcaseWeb.ShowcaseLive do
       position: %{x: x, y: y, z: z},
       rotation: %{x: 0, y: 0, z: 0},
       scale: %{x: 1, y: 1, z: 1},
-      color: default_color,
+      color: Map.get(params, "color", default_color),
       rotating: Map.get(params, "rotating", true),
       rotationSpeedX: Map.get(params, "rotationSpeedX", 0.01),
-      rotationSpeedY: Map.get(params, "rotationSpeedY", 0.01)
+      rotationSpeedY: Map.get(params, "rotationSpeedY", 0.01),
+      filename: Map.get(params, "filename"),
+      shape: Map.get(params, "shape"),
+      params: Map.get(params, "params")
     }
     
     components = Map.put(socket.assigns.components, component_id, component)
@@ -398,6 +638,18 @@ defmodule ShowcaseWeb.ShowcaseLive do
      socket
      |> assign(:lights, updated_lights)
      |> push_event("toggle_light", %{type: light_type, enabled: updated_lights[String.to_existing_atom(light_type)]})
+    }
+  end
+  
+  def handle_event("toggle_rail_light", _params, socket) do
+    lights = socket.assigns.lights
+    rail_enabled = !Map.get(lights, :rail, true)
+    updated_lights = Map.put(lights, :rail, rail_enabled)
+    
+    {:noreply, 
+     socket
+     |> assign(:lights, updated_lights)
+     |> push_event("toggle_rail_light", %{enabled: rail_enabled})
     }
   end
   
@@ -560,6 +812,65 @@ defmodule ShowcaseWeb.ShowcaseLive do
     else
       {:noreply, socket}
     end
+  end
+  
+  def handle_event("show_parametric_dialog", %{"shape" => shape}, socket) do
+    {:noreply, 
+     socket
+     |> assign(:show_parametric_dialog, true)
+     |> assign(:parametric_shape, shape)
+    }
+  end
+  
+  def handle_event("close_parametric_dialog", _params, socket) do
+    {:noreply, 
+     socket
+     |> assign(:show_parametric_dialog, false)
+     |> assign(:parametric_shape, nil)
+    }
+  end
+  
+  def handle_event("create_parametric_shape", params, socket) do
+    # Parse numeric values
+    parsed_params = Enum.reduce(params, %{}, fn {key, value}, acc ->
+      case Float.parse(value) do
+        {num, _} -> Map.put(acc, key, num)
+        :error -> Map.put(acc, key, value)
+      end
+    end)
+    
+    # Send to JavaScript to create the parametric shape
+    {:noreply, 
+     socket
+     |> push_event("create_parametric_shape", parsed_params)
+     |> assign(:show_parametric_dialog, false)
+     |> assign(:parametric_shape, nil)
+    }
+  end
+  
+  def handle_event("convert_to_mesh", _params, socket) do
+    if socket.assigns.selected_component && socket.assigns.selected_component.type == "glb" do
+      {:noreply, push_event(socket, "convert_to_mesh", %{id: socket.assigns.selected_component.id})}
+    else
+      {:noreply, socket}
+    end
+  end
+  
+  def handle_event("set_transform_mode", %{"mode" => mode}, socket) do
+    {:noreply, 
+     socket
+     |> assign(:transform_mode, mode)
+     |> push_event("set_transform_mode", %{mode: mode})
+    }
+  end
+  
+  def handle_event("toggle_transform_space", _params, socket) do
+    new_space = if socket.assigns.transform_space == "world", do: "local", else: "world"
+    {:noreply, 
+     socket
+     |> assign(:transform_space, new_space)
+     |> push_event("toggle_transform_space", %{})
+    }
   end
 
 end

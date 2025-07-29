@@ -38,8 +38,31 @@ const ShowcaseRoom = {
     // Handle color updates from Phoenix
     this.handleEvent("update_component_color", ({id, color}) => {
       const object = this.objects.find(obj => obj.userData.id == id)
-      if (object && object.material) {
-        object.material.color.set(color)
+      if (object) {
+        if (object.userData.type === 'mesh' && object.userData.solidMesh) {
+          // For converted meshes, update the solid mesh color
+          const solidMesh = object.userData.solidMesh
+          if (solidMesh.material) {
+            solidMesh.material.color.set(color)
+          }
+        } else if (object.userData.type === 'glb') {
+          // For GLB models, update all mesh materials
+          object.traverse((child) => {
+            if (child.isMesh && child.material) {
+              // Clone material to avoid affecting other instances
+              if (!child.material.userData || !child.material.userData.isCloned) {
+                child.material = child.material.clone()
+                child.material.userData = { isCloned: true }
+              }
+              child.material.color.set(color)
+            }
+          })
+          // Store the color for saving
+          object.userData.color = color
+        } else if (object.material) {
+          // For basic shapes and parametric objects
+          object.material.color.set(color)
+        }
       }
     })
     
@@ -64,8 +87,21 @@ const ShowcaseRoom = {
     
     // Handle light toggling
     this.handleEvent("toggle_light", ({type, enabled}) => {
+      console.log(`Toggling light ${type} to ${enabled}`)
       if (this.lights && this.lights[type]) {
+        // For all lights, toggle visibility directly
         this.lights[type].visible = enabled
+        console.log(`Light ${type} visibility set to ${enabled}`)
+      }
+    })
+    
+    // Handle rail light toggling
+    this.handleEvent("toggle_rail_light", ({enabled}) => {
+      console.log(`Toggling rail light to ${enabled}`)
+      if (this.railLight && this.railLight.container) {
+        this.railLight.container.visible = enabled
+        this.railLight.visible = enabled
+        console.log(`Rail light visibility set to ${enabled}`)
       }
     })
     
@@ -74,6 +110,31 @@ const ShowcaseRoom = {
       if (this.renderer) {
         this.renderer.toneMappingExposure = parseFloat(value)
       }
+    })
+    
+    // Handle parametric shape creation
+    this.handleEvent("create_parametric_shape", (params) => {
+      console.log("Creating parametric shape:", params)
+      this.createParametricShape(params)
+    })
+    
+    // Handle GLB to mesh conversion
+    this.handleEvent("convert_to_mesh", ({id}) => {
+      const object = this.objects.find(obj => obj.userData.id == id)
+      if (object && object.userData.type === 'glb') {
+        this.convertGLBToEditableMesh(object)
+        this.deselectObject()
+      }
+    })
+    
+    // Handle transform mode changes
+    this.handleEvent("set_transform_mode", ({mode}) => {
+      this.setTransformMode(mode)
+    })
+    
+    // Handle transform space toggle
+    this.handleEvent("toggle_transform_space", () => {
+      this.toggleTransformSpace()
     })
   },
 
@@ -111,8 +172,8 @@ const ShowcaseRoom = {
       const scene = new THREE.Scene()
       scene.background = new THREE.Color(sceneConfig.background_color || '#2a2a2a') // Dark studio grey
       
-      // Camera - Professional studio angle
-      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000)
+      // Camera - Professional studio angle with extreme zoom capability
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000) // Very small near plane for extreme close-ups
       camera.position.set(5, 3, 8) // Studio view angle
       camera.lookAt(0, 0, 0)
       
@@ -152,14 +213,15 @@ const ShowcaseRoom = {
       // Remove HDRI for now - rely on direct lighting
       // This prevents the overly bright environment
       
-      // Professional Studio Lighting Setup
+      // Professional Studio Lighting Setup - Brighter
       
-      // Subtle ambient for base illumination
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.2)
+      // Stronger ambient for better base illumination
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4)
       scene.add(ambientLight)
+      console.log("Added ambient light with intensity:", ambientLight.intensity)
       
-      // Key light - main directional light
-      const keyLight = new THREE.DirectionalLight(0xffffff, 0.8)
+      // Key light - main directional light (brighter)
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.2)
       keyLight.position.set(5, 10, 5)
       keyLight.castShadow = true
       keyLight.shadow.mapSize.width = 2048
@@ -173,18 +235,18 @@ const ShowcaseRoom = {
       keyLight.shadow.bias = -0.0005
       scene.add(keyLight)
       
-      // Fill light - softer from opposite side
-      const fillLight = new THREE.DirectionalLight(0xffffff, 0.4)
+      // Fill light - softer from opposite side (brighter)
+      const fillLight = new THREE.DirectionalLight(0xffffff, 0.6)
       fillLight.position.set(-5, 8, -5)
       scene.add(fillLight)
       
-      // Rim light - for edge highlights
-      const rimLight = new THREE.DirectionalLight(0xffffff, 0.3)
+      // Rim light - for edge highlights (brighter)
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.5)
       rimLight.position.set(0, 10, -10)
       scene.add(rimLight)
       
-      // Spotlight on center modeling area
-      const spotlight = new THREE.SpotLight(0xffffff, 1)
+      // Spotlight on center modeling area (brighter)
+      const spotlight = new THREE.SpotLight(0xffffff, 1.5)
       spotlight.position.set(0, 15, 0)
       spotlight.target.position.set(0, 0, 0)
       spotlight.angle = Math.PI / 6
@@ -197,6 +259,63 @@ const ShowcaseRoom = {
       scene.add(spotlight)
       scene.add(spotlight.target)
       
+      // DRAGGABLE LIGHT ON RAIL - DISABLED UNTIL FIXED
+      /*
+      // Create rail visualization
+      const railGeometry = new THREE.CylinderGeometry(0.05, 0.05, 20)
+      const railMaterial = new THREE.MeshBasicMaterial({ color: 0x666666 })
+      const rail = new THREE.Mesh(railGeometry, railMaterial)
+      rail.position.set(0, 10, 8)
+      rail.rotation.z = Math.PI / 2
+      scene.add(rail)
+      
+      // Create draggable light fixture
+      const fixtureGeometry = new THREE.ConeGeometry(0.5, 1, 8)
+      const fixtureMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xffff00
+      })
+      const lightFixture = new THREE.Mesh(fixtureGeometry, fixtureMaterial)
+      lightFixture.rotation.x = Math.PI
+      
+      // Create the actual draggable light
+      const draggableLight = new THREE.SpotLight(0xffffff, 2)
+      draggableLight.angle = Math.PI / 4
+      draggableLight.penumbra = 0.2
+      draggableLight.decay = 2
+      draggableLight.distance = 20
+      draggableLight.castShadow = true
+      
+      // Set light target BEFORE adding to container
+      draggableLight.target.position.set(0, 0, 0)
+      scene.add(draggableLight.target)
+      
+      // Light container that can be dragged
+      const lightContainer = new THREE.Group()
+      lightContainer.add(lightFixture)
+      lightContainer.add(draggableLight)
+      lightContainer.position.set(0, 10, 8)
+      lightContainer.userData = {
+        type: 'draggable_light',
+        id: 'draggable_light_fixture',
+        isDraggable: true,
+        railY: 10,
+        railZ: 8,
+        minX: -10,
+        maxX: 10
+      }
+      
+      scene.add(lightContainer)
+      this.draggableLight = lightContainer
+      this.objects.push(lightContainer)
+      */
+      
+      console.log("All lights added to scene. Checking visibility...")
+      console.log("Ambient light visible:", ambientLight.visible)
+      console.log("Key light visible:", keyLight.visible)
+      console.log("Fill light visible:", fillLight.visible)
+      console.log("Rim light visible:", rimLight.visible)
+      console.log("Spot light visible:", spotlight.visible)
+      
       // Store lights for later control
       this.lights = {
         ambient: ambientLight,
@@ -206,12 +325,23 @@ const ShowcaseRoom = {
         spot: spotlight
       }
       
+      // Initialize light visibility based on Phoenix state
+      const lightConfig = JSON.parse(this.el.dataset.lightConfig || '{}')
+      console.log('Initial light configuration:', lightConfig)
+      
+      // Set initial visibility for all lights
+      Object.keys(this.lights).forEach(lightType => {
+        const enabled = lightConfig[lightType] !== false // Default to true if not specified
+        this.lights[lightType].visible = enabled
+        console.log(`Light ${lightType} initialized to ${enabled}`)
+      })
+      
       // Professional camera controls
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
       controls.dampingFactor = 0.05
-      controls.minDistance = 3
-      controls.maxDistance = 50
+      controls.minDistance = 0.01  // Allow VERY close zoom - basically microscopic
+      controls.maxDistance = 200   // Allow zooming out much further too
       
       // Professional viewing angles
       controls.maxPolarAngle = Math.PI * 0.85 // Can look mostly down but not under
@@ -219,6 +349,9 @@ const ShowcaseRoom = {
       
       // Focus on center of modeling area
       controls.target.set(0, 0, 0)
+      
+      // Adjust zoom speed for better control when very close
+      controls.zoomSpeed = 1.5
       
       // Skip TransformControls for now - we'll use custom dragging
       let transformControls = null
@@ -263,6 +396,23 @@ const ShowcaseRoom = {
       }
       animate()
       
+      // Debug check after first render
+      setTimeout(() => {
+        console.log("Checking lights after initial render:")
+        if (this.lights) {
+          Object.entries(this.lights).forEach(([name, light]) => {
+            console.log(`${name} light:`, {
+              visible: light.visible,
+              intensity: light.intensity,
+              position: light.position
+            })
+          })
+        }
+        console.log("Total lights in scene:", scene.children.filter(child => child.isLight).length)
+        console.log("Scene background:", scene.background)
+        console.log("Renderer exposure:", renderer.toneMappingExposure)
+      }, 100)
+      
       // Handle resize
       const resizeObserver = new ResizeObserver(() => {
         camera.aspect = container.clientWidth / container.clientHeight
@@ -273,6 +423,11 @@ const ShowcaseRoom = {
       
       // Listen for drop events
       this.setupDropZone()
+      
+      // Add draggable light after initialization
+      setTimeout(() => {
+        this.addDraggableLight()
+      }, 500)
     }).catch(error => {
       console.error('Error loading Three.js modules:', error)
     })
@@ -311,6 +466,64 @@ const ShowcaseRoom = {
     // Axis helper
     const axesHelper = new THREE.AxesHelper(5)
     scene.add(axesHelper)
+  },
+
+  addDraggableLight() {
+    if (!this.THREE || !this.scene) return
+    
+    console.log("Adding draggable light...")
+    
+    // Create a rail visualization
+    const railGeometry = new this.THREE.CylinderGeometry(0.05, 0.05, 20)
+    const railMaterial = new this.THREE.MeshBasicMaterial({ color: 0x666666 })
+    const rail = new this.THREE.Mesh(railGeometry, railMaterial)
+    rail.position.set(0, 10, 8)
+    rail.rotation.z = Math.PI / 2
+    this.scene.add(rail)
+    
+    // Create light container
+    const lightContainer = new this.THREE.Group()
+    lightContainer.position.set(0, 10, 8)
+    
+    // Add visual indicator
+    const indicatorGeometry = new this.THREE.ConeGeometry(0.5, 1, 8)
+    const indicatorMaterial = new this.THREE.MeshBasicMaterial({ 
+      color: 0xffff00,
+      emissive: 0xffff00,
+      emissiveIntensity: 0.5 
+    })
+    const indicator = new this.THREE.Mesh(indicatorGeometry, indicatorMaterial)
+    indicator.rotation.x = Math.PI
+    lightContainer.add(indicator)
+    
+    // Add point light
+    const pointLight = new this.THREE.PointLight(0xffffff, 1.0)
+    pointLight.castShadow = true
+    lightContainer.add(pointLight)
+    
+    // Set user data for dragging
+    lightContainer.userData = {
+      type: 'draggable_light',
+      id: 'rail_light_' + Date.now(),
+      isDraggable: true,
+      constrainX: true,
+      minX: -10,
+      maxX: 10,
+      fixedY: 10,
+      fixedZ: 8
+    }
+    
+    this.scene.add(lightContainer)
+    this.objects.push(lightContainer)
+    
+    // Store reference
+    this.railLight = {
+      container: lightContainer,
+      light: pointLight,
+      visible: true
+    }
+    
+    console.log("Draggable light added successfully")
   },
 
   setupDropZone() {
@@ -478,7 +691,7 @@ const ShowcaseRoom = {
       if (intersects.length > 0) {
         let selectedObject = intersects[0].object
         
-        // For GLB models, we need to find the parent object that's in our objects array
+        // For GLB models and mesh groups, we need to find the parent object that's in our objects array
         let targetObject = selectedObject
         while (targetObject.parent && !this.objects.includes(targetObject)) {
           targetObject = targetObject.parent
@@ -548,6 +761,14 @@ const ShowcaseRoom = {
     } else if (object.userData.type === 'glb') {
       // For GLB models, we'll use a default or stored color
       color = object.userData.color || '#ffffff'
+    } else if (object.userData.type === 'mesh' && object.userData.solidMesh) {
+      // For converted meshes, get color from the solid mesh
+      const solidMesh = object.userData.solidMesh
+      if (solidMesh.material && solidMesh.material.color) {
+        color = '#' + solidMesh.material.color.getHexString()
+      }
+    } else if (object.userData.type === 'parametric' && object.material && object.material.color) {
+      color = '#' + object.material.color.getHexString()
     }
     
     this.pushEvent("component_selected", {
@@ -562,7 +783,7 @@ const ShowcaseRoom = {
     })
     
     // Visual feedback - for all selectable objects
-    if (object.userData.type === 'cube' || object.userData.type === 'sphere') {
+    if (object.userData.type === 'cube' || object.userData.type === 'sphere' || object.userData.type === 'parametric') {
       // Store original color
       if (!object.userData.originalColor) {
         object.userData.originalColor = object.material.color.getHex()
@@ -581,6 +802,24 @@ const ShowcaseRoom = {
           child.material.emissiveIntensity = 0.1
         }
       })
+    } else if (object.userData.type === 'mesh') {
+      // For converted meshes, highlight the solid mesh
+      if (object.userData.solidMesh && object.userData.solidMesh.material) {
+        const material = object.userData.solidMesh.material
+        if (!material.userData) material.userData = {}
+        if (!material.userData.originalEmissive) {
+          material.userData.originalEmissive = material.emissive ? material.emissive.getHex() : 0x000000
+        }
+        material.emissive = new this.THREE.Color(0xffffff)
+        material.emissiveIntensity = 0.2
+      }
+    } else if (object.userData.type === 'draggable_light') {
+      // For draggable light, highlight the fixture
+      const fixture = object.children[0]
+      if (fixture && fixture.material) {
+        fixture.material.emissive = new this.THREE.Color(0xffff00)
+        fixture.material.emissiveIntensity = 0.5
+      }
     }
   },
   
@@ -603,7 +842,7 @@ const ShowcaseRoom = {
       console.log('Grid helpers after removing selection helper:', this.scene.children.filter(c => c.type === 'GridHelper').length)
       
       // Reset visual feedback - for all selectable objects
-      if (this.selectedObject.userData.type === 'cube' || this.selectedObject.userData.type === 'sphere') {
+      if (this.selectedObject.userData.type === 'cube' || this.selectedObject.userData.type === 'sphere' || this.selectedObject.userData.type === 'parametric') {
         // Reset emissive
         this.selectedObject.material.emissive = new this.THREE.Color(0x000000)
         this.selectedObject.material.emissiveIntensity = 0
@@ -615,6 +854,22 @@ const ShowcaseRoom = {
             child.material.emissiveIntensity = 0
           }
         })
+      } else if (this.selectedObject.userData.type === 'mesh') {
+        // For converted meshes, reset the solid mesh
+        if (this.selectedObject.userData.solidMesh && this.selectedObject.userData.solidMesh.material) {
+          const material = this.selectedObject.userData.solidMesh.material
+          if (material.userData && material.userData.originalEmissive !== undefined) {
+            material.emissive = new this.THREE.Color(material.userData.originalEmissive)
+            material.emissiveIntensity = 0
+          }
+        }
+      } else if (this.selectedObject.userData.type === 'draggable_light') {
+        // For draggable light, reset the fixture
+        const fixture = this.selectedObject.children[0]
+        if (fixture && fixture.material) {
+          fixture.material.emissive = new this.THREE.Color(0x000000)
+          fixture.material.emissiveIntensity = 0
+        }
       }
       
       this.selectedObject = null
@@ -697,11 +952,15 @@ const ShowcaseRoom = {
     const updateDragPlane = () => {
       if (!this.selectedObject) return
       
+      // Get the actual world position of the object
+      const worldPos = new this.THREE.Vector3()
+      this.selectedObject.getWorldPosition(worldPos)
+      
       if (dragMode === 'horizontal') {
         // Horizontal plane at object's Y position
         dragPlane.setFromNormalAndCoplanarPoint(
           new this.THREE.Vector3(0, 1, 0),
-          this.selectedObject.position
+          worldPos
         )
       } else {
         // Vertical plane facing camera
@@ -711,7 +970,7 @@ const ShowcaseRoom = {
         cameraDirection.normalize()
         dragPlane.setFromNormalAndCoplanarPoint(
           cameraDirection,
-          this.selectedObject.position
+          worldPos
         )
       }
     }
@@ -732,7 +991,9 @@ const ShowcaseRoom = {
           // Calculate offset
           this.raycaster.setFromCamera(this.mouse, this.camera)
           if (this.raycaster.ray.intersectPlane(dragPlane, intersection)) {
-            offset.copy(intersection).sub(this.selectedObject.position)
+            const worldPos = new this.THREE.Vector3()
+            this.selectedObject.getWorldPosition(worldPos)
+            offset.copy(intersection).sub(worldPos)
           }
         } else if (this.transformMode === 'rotate') {
           // Store initial rotation and mouse position
@@ -760,12 +1021,30 @@ const ShowcaseRoom = {
           if (this.raycaster.ray.intersectPlane(dragPlane, intersection)) {
             const newPosition = intersection.sub(offset)
             
-            if (dragMode === 'horizontal') {
-              // Keep Y constant when dragging horizontally
-              newPosition.y = this.selectedObject.position.y
+            // Special handling for draggable light
+            if (this.selectedObject.userData.type === 'draggable_light') {
+              // Constrain to rail (only X movement)
+              this.selectedObject.position.x = Math.max(
+                this.selectedObject.userData.minX,
+                Math.min(this.selectedObject.userData.maxX, newPosition.x)
+              )
+              // Keep Y and Z fixed on rail
+              this.selectedObject.position.y = this.selectedObject.userData.railY
+              this.selectedObject.position.z = this.selectedObject.userData.railZ
+              
+              // Update light target to follow
+              if (this.selectedObject.children[1] && this.selectedObject.children[1].target) {
+                this.selectedObject.children[1].target.position.x = this.selectedObject.position.x
+              }
+            } else {
+              // Normal object dragging
+              if (dragMode === 'horizontal') {
+                // Keep Y constant when dragging horizontally
+                newPosition.y = this.selectedObject.position.y
+              }
+              
+              this.selectedObject.position.copy(newPosition)
             }
-            
-            this.selectedObject.position.copy(newPosition)
           }
         } else if (this.transformMode === 'rotate') {
           // Calculate rotation based on mouse movement
@@ -903,6 +1182,79 @@ const ShowcaseRoom = {
           
           // Add text to show it's a GLB placeholder
           console.log(`GLB model placeholder for: ${objData.filename || 'unknown.glb'}`)
+          break
+          
+        case 'parametric':
+          // Recreate parametric shapes
+          const params = objData.params || {}
+          switch(objData.shape) {
+            case 'box':
+              object = new this.THREE.Mesh(
+                new this.THREE.BoxGeometry(
+                  params.width || 1,
+                  params.height || 1,
+                  params.depth || 1,
+                  Math.floor(params.widthSegments || 1),
+                  Math.floor(params.heightSegments || 1),
+                  Math.floor(params.depthSegments || 1)
+                ),
+                new this.THREE.MeshStandardMaterial({ color: objData.color || 0x4a90e2 })
+              )
+              break
+            case 'cylinder':
+              object = new this.THREE.Mesh(
+                new this.THREE.CylinderGeometry(
+                  params.radiusTop || 0.5,
+                  params.radiusBottom || 0.5,
+                  params.height || 1,
+                  Math.floor(params.radialSegments || 8),
+                  Math.floor(params.heightSegments || 1)
+                ),
+                new this.THREE.MeshStandardMaterial({ color: objData.color || 0x4a90e2 })
+              )
+              break
+            case 'torus':
+              object = new this.THREE.Mesh(
+                new this.THREE.TorusGeometry(
+                  params.radius || 0.5,
+                  params.tube || 0.2,
+                  Math.floor(params.radialSegments || 8),
+                  Math.floor(params.tubularSegments || 16)
+                ),
+                new this.THREE.MeshStandardMaterial({ color: objData.color || 0x4a90e2 })
+              )
+              break
+            case 'cone':
+              object = new this.THREE.Mesh(
+                new this.THREE.ConeGeometry(
+                  params.radius || 0.5,
+                  params.height || 1,
+                  Math.floor(params.radialSegments || 8)
+                ),
+                new this.THREE.MeshStandardMaterial({ color: objData.color || 0x4a90e2 })
+              )
+              break
+            case 'plane':
+              object = new this.THREE.Mesh(
+                new this.THREE.PlaneGeometry(
+                  params.width || 2,
+                  params.height || 2,
+                  Math.floor(params.widthSegments || 1),
+                  Math.floor(params.heightSegments || 1)
+                ),
+                new this.THREE.MeshStandardMaterial({ color: objData.color || 0x4a90e2 })
+              )
+              break
+          }
+          break
+          
+        case 'mesh':
+          // Recreate converted meshes
+          const meshGeometry = new this.THREE.BoxGeometry(0.5, 0.5, 0.5)
+          const meshMaterial = new this.THREE.MeshStandardMaterial({ 
+            color: objData.color || 0x808080
+          })
+          object = new this.THREE.Mesh(meshGeometry, meshMaterial)
           break
           
         default:
@@ -1050,6 +1402,10 @@ const ShowcaseRoom = {
       if (obj.userData.type === 'glb') {
         baseData.filename = obj.userData.filename
         baseData.color = '#ffffff' // GLB models don't have a single color
+      } else if (obj.userData.type === 'parametric') {
+        baseData.shape = obj.userData.shape
+        baseData.params = obj.userData.params
+        baseData.color = obj.material && obj.material.color ? '#' + obj.material.color.getHexString() : '#ffffff'
       } else {
         baseData.color = obj.material && obj.material.color ? '#' + obj.material.color.getHexString() : '#ffffff'
       }
@@ -1225,6 +1581,205 @@ const ShowcaseRoom = {
       },
       options
     )
+  },
+  
+  createParametricShape(params) {
+    if (!this.THREE) return
+    
+    const shape = params.shape
+    let geometry
+    
+    switch(shape) {
+      case 'box':
+        geometry = new this.THREE.BoxGeometry(
+          params.width || 1,
+          params.height || 1,
+          params.depth || 1,
+          Math.floor(params.widthSegments || 1),
+          Math.floor(params.heightSegments || 1),
+          Math.floor(params.depthSegments || 1)
+        )
+        break
+        
+      case 'cylinder':
+        geometry = new this.THREE.CylinderGeometry(
+          params.radiusTop || 0.5,
+          params.radiusBottom || 0.5,
+          params.height || 1,
+          Math.floor(params.radialSegments || 8),
+          Math.floor(params.heightSegments || 1)
+        )
+        break
+        
+      case 'torus':
+        geometry = new this.THREE.TorusGeometry(
+          params.radius || 0.5,
+          params.tube || 0.2,
+          Math.floor(params.radialSegments || 8),
+          Math.floor(params.tubularSegments || 16)
+        )
+        break
+        
+      case 'cone':
+        geometry = new this.THREE.ConeGeometry(
+          params.radius || 0.5,
+          params.height || 1,
+          Math.floor(params.radialSegments || 8)
+        )
+        break
+        
+      case 'plane':
+        geometry = new this.THREE.PlaneGeometry(
+          params.width || 2,
+          params.height || 2,
+          Math.floor(params.widthSegments || 1),
+          Math.floor(params.heightSegments || 1)
+        )
+        break
+        
+      default:
+        console.error('Unknown parametric shape:', shape)
+        return
+    }
+    
+    // Create material
+    const material = new this.THREE.MeshStandardMaterial({
+      color: 0x4a90e2,
+      roughness: 0.5,
+      metalness: 0.1,
+      wireframe: params.wireframe || false
+    })
+    
+    // Create mesh
+    const mesh = new this.THREE.Mesh(geometry, material)
+    
+    // Position at center
+    mesh.position.set(0, shape === 'plane' ? 0 : 0.5, 0)
+    if (shape === 'plane') {
+      mesh.rotation.x = -Math.PI / 2
+    }
+    
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    
+    // Add user data
+    mesh.userData = {
+      type: 'parametric',
+      shape: shape,
+      params: params,
+      id: Date.now(),
+      rotating: false,
+      editable: true
+    }
+    
+    // Add to scene
+    this.scene.add(mesh)
+    this.objects.push(mesh)
+    
+    // Notify Phoenix
+    this.pushEvent('component_added', {
+      type: 'parametric',
+      shape: shape,
+      x: mesh.position.x,
+      y: mesh.position.y,
+      z: mesh.position.z,
+      id: mesh.userData.id.toString(),
+      params: params,
+      rotating: false
+    })
+    
+    // Auto-select the new shape
+    this.selectObject(mesh)
+  },
+  
+  convertGLBToEditableMesh(glbObject) {
+    if (!glbObject || glbObject.userData.type !== 'glb') return
+    
+    const meshes = []
+    const glbPosition = glbObject.position.clone()
+    const glbRotation = glbObject.rotation.clone()
+    const glbScale = glbObject.scale.clone()
+    
+    // Extract all meshes from the GLB
+    glbObject.traverse((child) => {
+      if (child.isMesh) {
+        // Clone the geometry
+        const geometry = child.geometry.clone()
+        
+        // Create both solid and wireframe materials
+        const material = child.material.clone()
+        material.transparent = true
+        material.opacity = 0.8
+        
+        // Create the main mesh
+        const editableMesh = new this.THREE.Mesh(geometry, material)
+        
+        // Create wireframe overlay
+        const wireframeMaterial = new this.THREE.MeshBasicMaterial({
+          color: 0x00ff00,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.3
+        })
+        const wireframeMesh = new this.THREE.Mesh(geometry, wireframeMaterial)
+        
+        // Add both to a group
+        const meshContainer = new this.THREE.Group()
+        meshContainer.add(editableMesh)
+        meshContainer.add(wireframeMesh)
+        
+        // Apply the world transform
+        const worldMatrix = child.matrixWorld.clone()
+        meshContainer.applyMatrix4(worldMatrix)
+        
+        // Add metadata with unique ID
+        const meshId = Date.now() * 1000 + meshes.length // Ensure unique integer ID
+        meshContainer.userData = {
+          type: 'mesh',
+          id: meshId,
+          originalName: child.name || 'Mesh',
+          fromGLB: glbObject.userData.filename,
+          editable: true,
+          rotating: false,
+          wireframe: wireframeMesh,
+          solidMesh: editableMesh
+        }
+        
+        meshContainer.castShadow = true
+        meshContainer.receiveShadow = true
+        
+        // Add directly to scene
+        this.scene.add(meshContainer)
+        meshes.push(meshContainer)
+        this.objects.push(meshContainer)
+        
+        // Notify Phoenix about the new mesh
+        this.pushEvent('component_added', {
+          type: 'mesh',
+          x: meshContainer.position.x,
+          y: meshContainer.position.y,
+          z: meshContainer.position.z,
+          id: meshContainer.userData.id.toString(),
+          color: '#808080',
+          rotating: false
+        })
+      }
+    })
+    
+    // Remove original GLB
+    this.scene.remove(glbObject)
+    const index = this.objects.indexOf(glbObject)
+    if (index > -1) {
+      this.objects.splice(index, 1)
+    }
+    
+    // Notify user
+    console.log(`Converted GLB to ${meshes.length} editable meshes with wireframe overlay`)
+    
+    // Show visual feedback
+    this.updateHelpText(`Converted to ${meshes.length} editable meshes`)
+    
+    return meshes
   }
   
 }
